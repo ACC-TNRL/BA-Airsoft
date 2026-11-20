@@ -591,14 +591,17 @@ function gameArt(id){ // een stukje echte veldkaart met de postsymbolen van het 
   return '<svg viewBox="'+vb+'" preserveAspectRatio="xMidYMid slice" aria-hidden="true">'+baseMapSVG({grid:false,zones:false})+o+"</svg>";
 }
 function pageGames(v){
-  const len=LEN(), N=len==="all"?LOCS.length:10;
+  const draw=()=>{const len=LEN(), N=len==="all"?LOCS.length:10;
   v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Spellen</h1><p>Leer waar alles ligt op het veld. Elke vraag is maximaal 1000 punten waard.</p></div>'+lenSeg()+"</div>"+
     '<div class="games">'+GAMES.map((g,i)=>{const mode=g.id+"-"+len, name=store.get("lastName",""), best=name?Scores.best(mode,name):null, board=Scores.board(mode), row=best?board.find(r=>nkey(r.n)===nkey(name)):null;
       return '<article class="game"><div class="game-art">'+gameArt(g.id)+'</div><div class="game-b"><h2 class="disp"><span class="ctl" aria-hidden="true">'+(i+1)+"</span>"+g.title+"</h2><p>"+g.desc+'</p><div class="game-meta"><span class="chip op">'+g.rule+"</span>"+
         (best?'<span class="best">Jouw beste <b>'+nlN(best.score)+"</b>"+(row?(row.ref?" · referentie":" · plek "+row.rank):"")+"</span>":'<span class="muted">Nog niet gespeeld</span>')+'</div></div><button class="btn pri lg" data-play="'+g.id+'">Speel '+N+"</button></article>"}).join("")+"</div></div>";
-  v.onclick=e=>{const b=e.target.closest("[data-len]");if(b){store.set("len",b.dataset.len);pageGames(v);return}
+  };
+  draw();
+  v.onclick=e=>{const b=e.target.closest("[data-len]");if(b){store.set("len",b.dataset.len);draw();return}
     const p=e.target.closest("[data-play]");if(p)askName(name=>startGame(p.dataset.play,LEN(),name))};
-  const off=Scores.on(()=>{if(route==="spellen"&&!document.querySelector(".play"))pageGames(v)}); cleanup=()=>{off();v.onclick=null};
+  // bij nieuwe scores opnieuw tekenen; één vaste luisteraar (eerder kwam er bij elke update een bij, waardoor de pagina vastliep)
+  let t=0; const off=Scores.on(()=>{clearTimeout(t);t=setTimeout(()=>{if(route==="spellen"&&!document.querySelector(".play"))draw()},200)}); cleanup=()=>{clearTimeout(t);off();v.onclick=null};
 }
 
 /* ---------- ranglijst ---------- */
@@ -715,7 +718,7 @@ function startGame(gid,len,name){
   el.addEventListener("keydown",onPlayKey);
   vvBind(true); render();
 }
-function stopGame(){if(!Q)return;Q.mv.destroy();Q.el.remove();Q=null;document.body.style.overflow="";vvBind(false);if(route==="spellen")pageGames($("#view"));else if(route==="ranglijst")pageRank($("#view"))}
+function stopGame(){if(!Q)return;Q.mv.destroy();Q.el.remove();Q=null;document.body.style.overflow="";vvBind(false);if(route==="spellen"||route==="ranglijst")go()} // via go(): ruimt de oude pagina netjes op
 // telefoon: de hoogte van het spel volgt het zichtbare deel, zodat typveld en kaart boven het toetsenbord blijven
 function vvSet(){if(Q)Q.el.style.setProperty("--vvh",(window.visualViewport?visualViewport.height:innerHeight)+"px");if(window.visualViewport&&visualViewport.offsetTop)window.scrollTo(0,0)}
 function vvBind(on){const f=on?"addEventListener":"removeEventListener";(window.visualViewport||window)[f]("resize",vvSet);if(on)vvSet()}
