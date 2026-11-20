@@ -306,10 +306,36 @@ function mqttClient(url,onMsg,onState){
 }
 
 const Scores=(()=>{
-  const ROOT="ba-veld/v1/score/", BROKERS=["wss://broker.emqx.io:8084/mqtt","wss://broker.hivemq.com:8884/mqtt","wss://test.mosquitto.org:8081/mqtt"];
+  const ROOT="ba-veld/v1/score/", RESET="ba-veld/v1/reset", BROKERS=["wss://broker.emqx.io:8084/mqtt","wss://broker.hivemq.com:8884/mqtt","wss://test.mosquitto.org:8081/mqtt"];
   let runs=store.get("runs",[]);              // eigen potjes: {n,mode,score,avg,sec,ts,max}
   let remote=store.get("remote",{});          // laatst bekende online scores: topic -> rij
   const listeners=new Set(); let clients=[], lastBroadcast=0;
+  /* Beheer: alles wissen. Het wis-bericht is ondertekend met de beheercode (ECDSA P-256);
+     elk toestel controleert de handtekening met de publieke sleutel hieronder. Zonder code kan niemand wissen. */
+  const ADMIN={kty:"EC",crv:"P-256",x:"IKeyFt1rgTZNTnCbVyz_YypRRDNSaJpeRp25j9Bbapw",y:"ho0zAvhct_htWWMfqC8eFwTpIU3sx8jzeQER5Vp-YzE"};
+  let reset=store.get("reset",{t:0,sig:""});  // laatste geldige wis-actie: alles van vóór t telt niet meer
+  const after=r=>(+r.ts||0)>reset.t;
+  const b64=u=>btoa(String.fromCharCode(...new Uint8Array(u))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  const unb64=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")),c=>c.charCodeAt(0));
+  const resetText=t=>new TextEncoder().encode("ba-veld-reset:"+t);
+  const ALG={name:"ECDSA",namedCurve:"P-256"}, SIG={name:"ECDSA",hash:"SHA-256"};
+  let pubKey=null;
+  async function validReset(t,sig){
+    try{pubKey=pubKey||await crypto.subtle.importKey("jwk",ADMIN,ALG,false,["verify"]);return await crypto.subtle.verify(SIG,pubKey,unb64(sig),resetText(t))}catch(e){return false}
+  }
+  async function signReset(code,t){
+    try{const k=await crypto.subtle.importKey("jwk",Object.assign({d:String(code).trim()},ADMIN),ALG,false,["sign"]);
+      const sig=b64(await crypto.subtle.sign(SIG,k,resetText(t)));return await validReset(t,sig)?sig:null}catch(e){return null}
+  }
+  function applyReset(t,sig){
+    if(!(t>reset.t))return; reset={t,sig}; store.set("reset",reset);
+    const gone={}; runs.forEach(r=>{if(!after(r))gone[r.mode+"|"+nkey(r.n)]=r});
+    runs=runs.filter(after); store.set("runs",runs);
+    Object.keys(remote).forEach(k=>{if(!after(remote[k]))delete remote[k]}); store.set("remote",remote);
+    // online opruimen: per naam de nieuwe beste (als die er is) of leeg
+    Object.values(gone).forEach(r=>{if(bestOf(r.mode,r.n))publish(r.mode,r.n);else clients.forEach(c=>c.alive&&c.publish(topicOf(r.mode,r.n),new Uint8Array(0),true))});
+    emit();
+  }
   const emit=()=>listeners.forEach(f=>f());
   const better=(a,b)=>b.score-a.score||a.sec-b.sec||a.ts-b.ts; // hoogste score, bij gelijk: snelste tijd
   const topicOf=(mode,name)=>ROOT+mode+"/"+DEVICE+"-"+encodeURIComponent(nkey(name)).slice(0,120);
@@ -320,14 +346,18 @@ const Scores=(()=>{
     const msg=JSON.stringify({n:b.n,score:b.score,avg:b.avg,sec:b.sec,ts:b.ts,max:b.max});
     clients.forEach(c=>c.alive&&c.publish(topicOf(mode,name),msg,true));
   }
-  function broadcastAll(){ // zelfherstel: alle eigen beste scores opnieuw sturen
+  function broadcastAll(){ // zelfherstel: de laatste wis-actie en alle eigen beste scores opnieuw sturen
+    if(reset.t)clients.forEach(c=>c.alive&&c.publish(RESET,JSON.stringify(reset),true));
     const seen={}; runs.forEach(r=>{const k=r.mode+"|"+nkey(r.n);if(!seen[k]){seen[k]=1;publish(r.mode,r.n)}});
   }
   function onMsg(topic,payload){
+    if(topic===RESET){try{const m=JSON.parse(new TextDecoder().decode(payload));
+      if(m.t>reset.t&&m.t<Date.now()+864e5&&typeof m.sig==="string")validReset(m.t,m.sig).then(ok=>ok&&applyReset(m.t,m.sig))}catch(e){}return}
     if(!topic.startsWith(ROOT))return; let row=null;
     if(payload.length){try{row=JSON.parse(new TextDecoder().decode(payload))}catch(e){return}}
     if(!row){if(remote[topic]){delete remote[topic];save()}return}
     const mode=topic.slice(ROOT.length).split("/")[0];
+    if(!after(row)){if(remote[topic]){delete remote[topic];save()}return} // van vóór de laatste wis-actie
     if(typeof row.n!=="string"||!(row.score>=0)||row.score>(row.max||34000)||row.score>34000||!(row.sec>=0))return; // grove controle
     remote[topic]={n:String(row.n).slice(0,16),mode,score:Math.round(row.score),avg:+row.avg||0,sec:+row.sec||0,ts:+row.ts||0,mine:topic.includes("/"+DEVICE+"-")};
     save();
@@ -336,7 +366,7 @@ const Scores=(()=>{
   function connect(){
     if(clients.length)return;
     clients=BROKERS.map(u=>mqttClient(u,onMsg,()=>{emit();if(Date.now()-lastBroadcast>4000&&clients.some(c=>c.alive)){lastBroadcast=Date.now();setTimeout(broadcastAll,800)}}));
-    clients.forEach(c=>c.subscribe(ROOT+"#"));
+    clients.forEach(c=>{c.subscribe(RESET);c.subscribe(ROOT+"#")});
   }
   return{
     connect, on(f){listeners.add(f);return()=>listeners.delete(f)},
@@ -350,9 +380,17 @@ const Scores=(()=>{
     best:bestOf, myNames,
     history(mode,name){return runs.filter(r=>r.mode===mode&&nkey(r.n)===nkey(name)).sort((a,b)=>a.ts-b.ts)},
     board(mode){ // één regel per naam: de beste, van dit toestel en online samen
-      const all=runs.filter(r=>r.mode===mode).map(r=>Object.assign({mine:true},r)).concat(Object.values(remote).filter(r=>r.mode===mode));
+      const all=runs.filter(r=>r.mode===mode&&after(r)).map(r=>Object.assign({mine:true},r)).concat(Object.values(remote).filter(r=>r.mode===mode&&after(r)));
       const best={}; all.sort(better).forEach(r=>{const k=nkey(r.n);if(!best[k])best[k]=r});
       return Object.values(best).sort(better);
+    },
+    get lastReset(){return reset.t},
+    checkCode(code){return signReset(code,Date.now()).then(Boolean)},
+    async resetAll(code){ // beheer: alle scores van iedereen wissen
+      if(!clients.some(c=>c.alive))return "offline";
+      const t=Date.now(), sig=await signReset(code,t); if(!sig)return "code";
+      const msg=JSON.stringify({t,sig}); clients.forEach(c=>c.alive&&c.publish(RESET,msg,true));
+      applyReset(t,sig); return "ok";
     },
     clearMine(){ // eigen scores wissen, hier en online
       const seen={}; runs.forEach(r=>{const k=r.mode+"|"+nkey(r.n);if(!seen[k]){seen[k]=1;clients.forEach(c=>c.alive&&c.publish(topicOf(r.mode,r.n),new Uint8Array(0),true))}});
@@ -402,13 +440,14 @@ function liveBadge(){const on=Scores.online, el=$("#live"); if(!el)return; el.cl
 let route="", cleanup=null;
 function go(){
   const r=(location.hash.replace(/^#\/?/,"")||"kaart").split("/")[0];
-  if(!ROUTES.some(x=>x[0]===r)){location.hash="#kaart";return}
+  const PAGES={kaart:pageMap,spellen:pageGames,ranglijst:pageRank,beheer:pageAdmin}; // beheer staat bewust niet in het menu
+  if(!PAGES[r]){location.hash="#kaart";return}
   if(cleanup){cleanup();cleanup=null}
   route=r;
   $$("[data-r]").forEach(a=>{if(a.dataset.r===r)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current")});
   const v=$("#view"); v.className=""; v.scrollTop=0;
-  ({kaart:pageMap,spellen:pageGames,ranglijst:pageRank})[r](v);
-  document.title=(r==="kaart"?"Kaart":r==="spellen"?"Spellen":"Ranglijst")+" · B&A Veld";
+  PAGES[r](v);
+  document.title=({kaart:"Kaart",spellen:"Spellen",ranglijst:"Ranglijst",beheer:"Beheer"})[r]+" · B&A Veld";
 }
 
 /* ---------- kaart ---------- */
@@ -570,6 +609,34 @@ function pageRank(v){
   let t=0; const off=Scores.on(()=>{clearTimeout(t);t=setTimeout(()=>{if(route==="ranglijst"&&!$(".dlg-bg"))draw()},200)}); cleanup=()=>{off();v.onclick=null};
 }
 
+/* ---------- beheer (#beheer) ---------- */
+function pageAdmin(v){
+  const when=t=>new Date(t).toLocaleString("nl-NL",{day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"});
+  let busy=false;
+  const draw=()=>{const code=store.get("admin",""), on=Scores.online, last=Scores.lastReset;
+    v.innerHTML='<div class="page adm"><div class="page-h"><div><h1 class="disp">Beheer</h1><p>Alleen voor de beheerder van de app.</p></div></div>'+
+      (!code?'<section class="board adm-box"><h2 class="disp">Beheercode</h2><p>Vul de beheercode in om de ranglijst te kunnen beheren. De code wordt op dit toestel onthouden.</p>'+
+        '<form class="form" id="af"><input class="inp" id="acode" type="password" autocomplete="current-password" spellcheck="false" placeholder="Beheercode" aria-label="Beheercode"><div class="err" id="aerr" hidden>Deze beheercode klopt niet.</div><button class="btn pri lg" type="submit">Doorgaan</button></form></section>'
+      :'<section class="board adm-box"><h2 class="disp">Alle scores wissen</h2><p>De ranglijsten van alle spellen worden leeg, bij iedereen. Ook de beste scores op elk toestel verdwijnen. Toestellen die nu geen verbinding hebben, wissen hun scores zodra ze weer online zijn.</p>'+
+        '<dl class="adm-st"><div><dt>Verbinding</dt><dd>'+(on?'<span class="dot on"></span>Online':'<span class="dot"></span>Geen verbinding')+'</dd></div><div><dt>Laatst gewist</dt><dd>'+(last?when(last):"Nog nooit")+"</dd></div></dl>"+
+        '<button class="btn danger lg" id="areset"'+(on&&!busy?"":" disabled")+">"+(busy?"Bezig met wissen…":"Alle scores wissen")+"</button>"+
+        (on?"":'<p class="hint">Wissen kan pas als er verbinding is met de ranglijst.</p>')+
+        '<div class="foot"><span></span><button class="linkbtn" id="aforget">Beheercode vergeten op dit toestel</button></div></section>')+"</div>";
+    const f=$("#af"); if(f){$("#acode").focus();f.onsubmit=async e=>{e.preventDefault();const c=$("#acode").value.trim();if(!c)return;
+      if(await Scores.checkCode(c)){store.set("admin",c);draw()}else{$("#aerr").hidden=false;$("#acode").select()}}}
+  };
+  draw();
+  v.onclick=e=>{
+    if(e.target.id==="aforget"){try{localStorage.removeItem("baveld.admin")}catch(x){}draw();return}
+    if(e.target.id==="areset")confirmDlg("Alle scores wissen?","De ranglijst wordt voor iedereen leeg. Dit kun je niet ongedaan maken.","Alles wissen",async()=>{
+      busy=true;draw(); const r=await Scores.resetAll(store.get("admin","")); busy=false;
+      if(r==="code"){try{localStorage.removeItem("baveld.admin")}catch(x){}toast("De beheercode klopt niet meer. Vul hem opnieuw in.")}
+      else toast(r==="ok"?"Alle scores zijn gewist":"Geen verbinding. Probeer het opnieuw zodra je online bent.");
+      draw()},"danger");
+  };
+  const off=Scores.on(()=>{if(route==="beheer"&&!$(".dlg-bg")&&!$("#af"))draw()}); cleanup=()=>{off();v.onclick=null};
+}
+
 /* ---------- vensters ---------- */
 function dialog(html,onOpen){
   const bg=document.createElement("div"); bg.className="dlg-bg"; bg.innerHTML='<div class="dlg" role="dialog" aria-modal="true"><button class="x" aria-label="Sluiten">×</button>'+html+"</div>";
@@ -578,7 +645,7 @@ function dialog(html,onOpen){
   document.addEventListener("keydown",key); bg.addEventListener("click",e=>{if(e.target===bg||e.target.closest(".x"))close()});
   onOpen&&onOpen(bg.querySelector(".dlg"),close); return close;
 }
-function confirmDlg(t,p,ok,fn){dialog('<h2 class="disp">'+t+"</h2><p>"+p+'</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-c>Annuleren</button><button class="btn pri" data-ok>'+ok+"</button></div>",(d,close)=>{d.querySelector("[data-c]").onclick=close;d.querySelector("[data-ok]").onclick=()=>{close();fn()};d.querySelector("[data-ok]").focus()})}
+function confirmDlg(t,p,ok,fn,kind){dialog('<h2 class="disp">'+t+"</h2><p>"+p+'</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-c>Annuleren</button><button class="btn '+(kind||"pri")+'" data-ok>'+ok+"</button></div>",(d,close)=>{d.querySelector("[data-c]").onclick=close;d.querySelector("[data-ok]").onclick=()=>{close();fn()};d.querySelector("[data-ok]").focus()})}
 function showAll(mode,g){
   const rows=Scores.board(mode), name=store.get("lastName",""), me=rows.findIndex(r=>r.mine&&nkey(r.n)===nkey(name));
   dialog('<h2 class="disp">'+g.title+"</h2><p>"+(mode.endsWith("all")?"Alle "+LOCS.length+" locaties":"10 locaties")+" · "+plural(rows.length,"speler","spelers")+'</p><ol class="rank">'+rows.map((r,i)=>rankRow(r,i,me,g.time)).join("")+"</ol>",d=>{const y=d.querySelector(".you");if(y&&me>6)y.scrollIntoView({block:"center"})});

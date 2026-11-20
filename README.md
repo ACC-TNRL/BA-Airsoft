@@ -25,6 +25,7 @@ Upload de nieuwe bestanden opnieuw in dezelfde repository en overschrijf de oude
 - Scores gaan zonder account via openbare MQTT-servers (EMQX, HiveMQ en Mosquitto). Elke telefoon stuurt bij het openen zijn eigen beste scores opnieuw, zodat de lijst zich herstelt als een server iets kwijtraakt.
 - Zonder bereik speel je gewoon door; je score gaat mee zodra er weer verbinding is.
 - Onder de ranglijst staat **Mijn scores op dit toestel wissen**. Dat haalt je scores van dit toestel ook van de online lijst.
+- **Beheer:** open `#beheer` achter het adres van de app (bijvoorbeeld `https://acc-tnrl.github.io/BA-Airsoft/#beheer`), vul de beheercode in en kies **Alle scores wissen**. De ranglijst wordt dan voor iedereen leeg. Toestellen die op dat moment offline zijn, wissen hun scores zodra ze weer verbinding hebben. Zonder de beheercode kan niemand dit; bewaar de code dus goed en deel hem niet.
 - De lijst is openbaar en niet beveiligd: iemand met verstand van zaken kan er een nepscore in zetten. Voor een vriendengroep is dat prima. Wil je het later dichtzetten, dan kan de opslag worden vervangen door bijvoorbeeld Supabase.
 
 ## Wat er in zit
