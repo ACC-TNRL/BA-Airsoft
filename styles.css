@@ -159,18 +159,18 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .layers .seg{width:100%;margin-top:8px}.layers .seg button{flex:1;padding:0 8px}
 .layers h3.lh2{margin-top:16px}
 /* alle namen: icoon en naam als één label dat met de kaart meeschaalt, zoals op een gedrukte kaart */
-.nm{position:absolute;display:flex;align-items:center;gap:.3em;font-size:calc(var(--zs,1) * 14px);line-height:1.1;white-space:nowrap;
+.ml{position:absolute;display:flex;align-items:center;gap:.3em;font-size:calc(var(--zs,1) * 14px);line-height:1.1;white-space:nowrap;
   background:rgba(26,28,25,.86);color:#fff;border-radius:999px;padding:.14em .62em .14em .14em;box-shadow:0 1px 3px rgba(0,0,0,.25);
   left:-1.015em;top:-1.015em}
-.nm>svg{width:1.75em;height:1.75em;flex:none;filter:none}
-.nm>b{font-weight:700;letter-spacing:.005em}
-.nm.s-l{flex-direction:row-reverse;padding:.14em .14em .14em .62em;left:auto;right:-1.015em}
-.nm.s-t,.nm.s-b{flex-direction:column;gap:.12em;border-radius:.95em;padding:.3em .55em .14em;left:0;transform:translateX(-50%)}
-.nm.s-t{flex-direction:column-reverse;padding:.3em .55em .14em;top:auto;bottom:-1.015em}
-.nm.s-b{padding:.14em .55em .3em}
-.nm.s-c{padding:.25em .6em;left:0;top:0;transform:translate(-50%,-50%)}.nm.s-c>svg{display:none} /* Winkels: alleen de naam, op de gebouwen */
+.ml>svg{width:1.75em;height:1.75em;flex:none;filter:none}
+.ml>b{font-weight:700;letter-spacing:.005em}
+.ml.s-l{flex-direction:row-reverse;padding:.14em .14em .14em .62em;left:auto;right:-1.015em}
+.ml.s-t,.ml.s-b{flex-direction:column;gap:.12em;border-radius:.95em;padding:.3em .55em .14em;left:0;transform:translateX(-50%)}
+.ml.s-t{flex-direction:column-reverse;padding:.3em .55em .14em;top:auto;bottom:-1.015em}
+.ml.s-b{padding:.14em .55em .3em}
+.ml.s-c{padding:.25em .6em;left:0;top:0;transform:translate(-50%,-50%)}.ml.s-c>svg{display:none} /* Winkels: alleen de naam, op de gebouwen */
 .mk.nmk.sel{z-index:3}
-.mk.nmk.sel .nm{background:var(--op)}
+.mk.nmk.sel .ml{background:var(--op)}
 .mk.nmk.sel::before{display:none}
 .mk.dim{opacity:.35}
 .all-names .mk.flag>svg{width:calc(var(--zs,1) * 24px);height:calc(var(--zs,1) * 24px);left:calc(var(--zs,1) * -12px);top:calc(var(--zs,1) * -12px)}
@@ -247,6 +247,10 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .rank li.you{background:var(--op-soft)!important;box-shadow:inset 3px 0 0 var(--op)}
 .rank li.now{outline:2px solid var(--op);outline-offset:-2px}
 .rank .tag{font-style:normal;font-size:11.5px;font-weight:700;color:var(--op-ink);margin-left:6px}
+.rank li.ref{background:transparent!important;box-shadow:inset 0 0 0 1.5px var(--line-2);border-radius:11px}
+.rank li.ref .rk{color:var(--ink-3)}
+.rank li.ref .sc{color:var(--ink-2)}
+.rank .tag.ref{color:var(--ink-3);font-weight:650}
 .rank-me{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line-2)}
 .board .all{margin-top:10px;width:100%}
 .empty{border:1.5px dashed var(--line-2);border-radius:14px;padding:22px 16px;text-align:center;color:var(--ink-2)}

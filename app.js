@@ -311,6 +311,7 @@ const Scores=(()=>{
   let runs=store.get("runs",[]);              // eigen potjes: {n,mode,score,avg,sec,ts,max}
   let remote=store.get("remote",{});          // laatst bekende online scores: topic -> rij
   const listeners=new Set(); let clients=[], lastBroadcast=0;
+  const REF=/raymond/i; // namen met "Raymond" spelen buiten mededinging: ze staan als referentie in de lijst, zonder plek
   /* Beheer: alles wissen. Het wis-bericht is ondertekend met de beheercode (ECDSA P-256);
      elk toestel controleert de handtekening met de publieke sleutel hieronder. Zonder code kan niemand wissen. */
   const ADMIN={kty:"EC",crv:"P-256",x:"IKeyFt1rgTZNTnCbVyz_YypRRDNSaJpeRp25j9Bbapw",y:"ho0zAvhct_htWWMfqC8eFwTpIU3sx8jzeQER5Vp-YzE"};
@@ -383,8 +384,10 @@ const Scores=(()=>{
     board(mode){ // één regel per naam: de beste, van dit toestel en online samen
       const all=runs.filter(r=>r.mode===mode&&after(r)).map(r=>Object.assign({mine:true},r)).concat(Object.values(remote).filter(r=>r.mode===mode&&after(r)));
       const best={}; all.sort(better).forEach(r=>{const k=nkey(r.n);if(!best[k])best[k]=r});
-      return Object.values(best).sort(better);
+      let k=0; // plek telt alleen spelers die meedingen
+      return Object.values(best).sort(better).map(r=>{const ref=REF.test(r.n);return Object.assign({},r,{ref,rank:ref?0:++k})});
     },
+    isRef:n=>REF.test(n),
     get lastReset(){return reset.t},
     checkCode(code){return signReset(code,Date.now()).then(Boolean)},
     async resetAll(code){ // beheer: alle scores van iedereen wissen
@@ -479,7 +482,7 @@ function pageMap(v){
   const drawMarks=()=>{const all=MAPPREF.names==="alle"; mv.noLabels=MAPPREF.names==="uit"; $("#mv").classList.toggle("all-names",all);
     const dim=l=>MAPPREF.field==="klein"&&!inSmall(l)?" dim":"";
     mv.setMarks(areaMarks({zones:MAPPREF.zones,small:MAPPREF.field==="klein"}).concat(LOCS.map(l=>all
-      ? {x:l.x,y:l.y,html:'<span class="nm s-'+(l.n==="Winkels"?"c":l.side)+'">'+iconSVG(l.n,36)+"<b>"+esc(l.n)+"</b></span>",loc:l,cls:"nmk"+(sel===l?" sel":"")+dim(l)} // naam en icoon als één label, groeit mee met de kaart
+      ? {x:l.x,y:l.y,html:'<span class="ml s-'+(l.n==="Winkels"?"c":l.side)+'">'+iconSVG(l.n,36)+"<b>"+esc(l.n)+"</b></span>",loc:l,cls:"nmk"+(sel===l?" sel":"")+dim(l)} // naam en icoon als één label, groeit mee met de kaart
       : {x:l.x,y:l.y,html:iconSVG(l.n,36),label:l.n,side:l.side,prio:sel===l?9:1,loc:l,cls:(sel===l?"sel":"")+dim(l)}),
       SPAWNS.map(p=>({x:p[0],y:p[1],html:flagIcon(p[2],30),cls:"flag"}))))};
   drawBase(); drawMarks();
@@ -590,9 +593,9 @@ function gameArt(id){ // een stukje echte veldkaart met de postsymbolen van het 
 function pageGames(v){
   const len=LEN(), N=len==="all"?LOCS.length:10;
   v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Spellen</h1><p>Leer waar alles ligt op het veld. Elke vraag is maximaal 1000 punten waard.</p></div>'+lenSeg()+"</div>"+
-    '<div class="games">'+GAMES.map((g,i)=>{const mode=g.id+"-"+len, name=store.get("lastName",""), best=name?Scores.best(mode,name):null, board=Scores.board(mode), place=best?board.findIndex(r=>nkey(r.n)===nkey(name))+1:0;
+    '<div class="games">'+GAMES.map((g,i)=>{const mode=g.id+"-"+len, name=store.get("lastName",""), best=name?Scores.best(mode,name):null, board=Scores.board(mode), row=best?board.find(r=>nkey(r.n)===nkey(name)):null;
       return '<article class="game"><div class="game-art">'+gameArt(g.id)+'</div><div class="game-b"><h2 class="disp"><span class="ctl" aria-hidden="true">'+(i+1)+"</span>"+g.title+"</h2><p>"+g.desc+'</p><div class="game-meta"><span class="chip op">'+g.rule+"</span>"+
-        (best?'<span class="best">Jouw beste <b>'+nlN(best.score)+"</b>"+(place?" · plek "+place:"")+"</span>":'<span class="muted">Nog niet gespeeld</span>')+'</div></div><button class="btn pri lg" data-play="'+g.id+'">Speel '+N+"</button></article>"}).join("")+"</div></div>";
+        (best?'<span class="best">Jouw beste <b>'+nlN(best.score)+"</b>"+(row?(row.ref?" · referentie":" · plek "+row.rank):"")+"</span>":'<span class="muted">Nog niet gespeeld</span>')+'</div></div><button class="btn pri lg" data-play="'+g.id+'">Speel '+N+"</button></article>"}).join("")+"</div></div>";
   v.onclick=e=>{const b=e.target.closest("[data-len]");if(b){store.set("len",b.dataset.len);pageGames(v);return}
     const p=e.target.closest("[data-play]");if(p)askName(name=>startGame(p.dataset.play,LEN(),name))};
   const off=Scores.on(()=>{if(route==="spellen"&&!document.querySelector(".play"))pageGames(v)}); cleanup=()=>{off();v.onclick=null};
@@ -600,19 +603,22 @@ function pageGames(v){
 
 /* ---------- ranglijst ---------- */
 function rankRow(r,i,me,ic,mark){const you=me>=0&&i===me;
-  return '<li class="'+(i<3?"m"+(i+1):"")+(you?" you":"")+(mark&&r.ts===mark&&r.mine?" now":"")+'"><span class="rk">'+(i+1)+'</span><span class="nm"><b>'+esc(r.n)+(you?'<i class="tag">jij</i>':"")+"</b><small>"+mmss(r.sec)+" · "+(ic?nlS(r.avg)+" s gem.":Math.round(r.avg)+" m gem.")+'</small></span><span class="sc">'+nlN(r.score)+"</span></li>"}
+  return '<li class="'+(r.ref?"ref":r.rank<=3?"m"+r.rank:"")+(you?" you":"")+(mark&&r.ts===mark&&r.mine?" now":"")+'"><span class="rk"'+(r.ref?' aria-label="Referentie, telt niet mee">–':">"+r.rank)+'</span><span class="nm"><b>'+esc(r.n)+(r.ref?'<i class="tag ref">referentie</i>':"")+(you?'<i class="tag">jij</i>':"")+"</b><small>"+mmss(r.sec)+" · "+(ic?nlS(r.avg)+" s gem.":Math.round(r.avg)+" m gem.")+'</small></span><span class="sc">'+nlN(r.score)+"</span></li>"}
 function boardHTML(mode,g,max,mark){
   const rows=Scores.board(mode), name=store.get("lastName",""), me=rows.findIndex(r=>r.mine&&nkey(r.n)===nkey(name)), ic=g.time;
   if(!rows.length)return '<div class="empty">Nog geen scores. Speel als eerste en zet de lat.</div>';
-  let h='<ol class="rank">'+rows.slice(0,max).map((r,i)=>rankRow(r,i,me,ic,mark)).join("")+"</ol>";
-  if(me>=max)h+='<ol class="rank rank-me">'+rankRow(rows[me],me,me,ic,mark)+"</ol>";
-  if(rows.length>max)h+='<button class="btn all" data-all="'+mode+'">Hele lijst ('+rows.length+")</button>";
+  // top "max" van de spelers die meedingen; referentiescores staan ertussen op hun eigen hoogte en blijven altijd zichtbaar
+  const ranked=rows.filter(r=>!r.ref), cut=ranked.length>max?rows.indexOf(ranked[max]):rows.length;
+  let h='<ol class="rank">'+rows.slice(0,cut).map((r,i)=>rankRow(r,i,me,ic,mark)).join("")+"</ol>";
+  const extra=rows.map((r,i)=>[r,i]).slice(cut).filter(([r,i])=>r.ref||i===me);
+  if(extra.length)h+='<ol class="rank rank-me">'+extra.map(([r,i])=>rankRow(r,i,me,ic,mark)).join("")+"</ol>";
+  if(ranked.length>max)h+='<button class="btn all" data-all="'+mode+'">Hele lijst ('+ranked.length+")</button>";
   return h;
 }
 function pageRank(v){
   const draw=()=>{const len=LEN();
     v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Ranglijst</h1><p>Per speler telt de beste score. Bij een gelijke score wint de snelste.</p></div>'+lenSeg()+"</div>"+
-      '<div class="boards">'+GAMES.map((g,i)=>'<section class="board"><div class="board-h"><span class="ctl" aria-hidden="true">'+(i+1)+'</span><h2 class="disp">'+g.title+"</h2><small>"+plural(Scores.board(g.id+"-"+len).length,"speler","spelers")+"</small></div>"+boardHTML(g.id+"-"+len,g,10)+"</section>").join("")+"</div>"+
+      '<div class="boards">'+GAMES.map((g,i)=>'<section class="board"><div class="board-h"><span class="ctl" aria-hidden="true">'+(i+1)+'</span><h2 class="disp">'+g.title+"</h2><small>"+plural(Scores.board(g.id+"-"+len).filter(r=>!r.ref).length,"speler","spelers")+"</small></div>"+boardHTML(g.id+"-"+len,g,10)+"</section>").join("")+"</div>"+
       '<div class="foot"><span>'+(Scores.online?"Live: scores van alle spelers worden gedeeld.":"Offline: je ziet de laatst bekende ranglijst. Nieuwe scores gaan mee zodra er weer verbinding is.")+'</span><button class="linkbtn" id="wipe">Mijn scores op dit toestel wissen</button></div></div>'};
   draw();
   v.onclick=e=>{const b=e.target.closest("[data-len]");if(b){store.set("len",b.dataset.len);draw();return}
@@ -660,7 +666,7 @@ function dialog(html,onOpen){
 function confirmDlg(t,p,ok,fn,kind){dialog('<h2 class="disp">'+t+"</h2><p>"+p+'</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-c>Annuleren</button><button class="btn '+(kind||"pri")+'" data-ok>'+ok+"</button></div>",(d,close)=>{d.querySelector("[data-c]").onclick=close;d.querySelector("[data-ok]").onclick=()=>{close();fn()};d.querySelector("[data-ok]").focus()})}
 function showAll(mode,g){
   const rows=Scores.board(mode), name=store.get("lastName",""), me=rows.findIndex(r=>r.mine&&nkey(r.n)===nkey(name));
-  dialog('<h2 class="disp">'+g.title+"</h2><p>"+(mode.endsWith("all")?"Alle "+LOCS.length+" locaties":"10 locaties")+" · "+plural(rows.length,"speler","spelers")+'</p><ol class="rank">'+rows.map((r,i)=>rankRow(r,i,me,g.time)).join("")+"</ol>",d=>{const y=d.querySelector(".you");if(y&&me>6)y.scrollIntoView({block:"center"})});
+  dialog('<h2 class="disp">'+g.title+"</h2><p>"+(mode.endsWith("all")?"Alle "+LOCS.length+" locaties":"10 locaties")+" · "+plural(rows.filter(r=>!r.ref).length,"speler","spelers")+'</p><ol class="rank">'+rows.map((r,i)=>rankRow(r,i,me,g.time)).join("")+"</ol>",d=>{const y=d.querySelector(".you");if(y&&me>6)y.scrollIntoView({block:"center"})});
 }
 function askName(done){ // eerst kiezen wie er speelt
   const names=Scores.myNames().concat(store.get("names",[])).filter((n,i,a)=>a.findIndex(x=>nkey(x)===nkey(n))===i).slice(0,8);
@@ -678,11 +684,10 @@ function askName(done){ // eerst kiezen wie er speelt
 
 /* ---------- spellen ---------- */
 const GAMES=[
-  {id:"tik",title:"Aanwijzen",desc:"Je krijgt een naam. Tik zo snel mogelijk het juiste rondje op de kaart aan.",rule:"Goed binnen 3 s: 1000 punten",time:true,limit:3},
+  {id:"tik",title:"Aanwijzen",desc:"Je krijgt een naam. Tik op de kaart om in te zoomen en tik dan zo snel mogelijk het juiste rondje aan.",rule:"Goed binnen 4 s: 1000 punten",time:true,limit:4},
   {id:"naam",title:"Benoemen",desc:"Eén rondje licht op. Typ de naam en kies hem uit de suggesties.",rule:"Goed binnen 6 s: 1000 punten",time:true,limit:6},
   {id:"plek",title:"Plaatsen",desc:"Een kaart zonder rondjes. Tik waar de locatie ligt: hoe dichterbij, hoe meer punten.",rule:"Binnen 7 m: 1000 punten",time:false}
 ];
-const CLUSTER=60;    // rondjes dichter bij elkaar dan dit (kaarteenheden, ~28 m): eerst inzoomen, op elk scherm gelijk
 const SMALL_S=.55;   // Plaatsen: kaart kleiner dan dit (px per eenheid) zoomt eerst in rond je tik
 const ZF=3.2;        // hoeveel keer inzoomen
 const timePts=(s,lim)=>s<=lim?1000:Math.max(100,Math.round(1000*Math.exp(-(s-lim)/8)));
@@ -740,7 +745,7 @@ function render(){
   Q.mv.setGame(gameLayer());
   $("#unz").hidden=!(Q.zoom&&ph==="ask"); $(".zoomed-hint",Q.el).hidden=!(Q.zoom&&ph==="ask");
   const rd=$(".ready",Q.el); rd.hidden=ph!=="ready";
-  if(ph==="ready")rd.innerHTML='<div><h2 class="disp">'+(Q.i===0?"Klaar?":"Vraag "+(Q.i+1))+"</h2><p>"+(g.time?"De tijd loopt vanaf Start. "+g.rule.replace(": "," is ")+".":"Tik op de kaart waar de locatie ligt. Binnen 7 meter is 1000 punten.")+'</p><button class="btn pri lg" id="go">Start</button></div>';
+  if(ph==="ready")rd.innerHTML='<div><h2 class="disp">'+(Q.i===0?"Klaar?":"Vraag "+(Q.i+1))+"</h2><p>"+(g.time?"De tijd loopt vanaf Start. "+(g.id==="tik"?"Je eerste tik zoomt in, met je tweede tik geef je antwoord. ":"")+g.rule.replace(": "," is ")+".":"Tik op de kaart waar de locatie ligt. Binnen 7 meter is 1000 punten.")+'</p><button class="btn pri lg" id="go">Start</button></div>';
   // onderbalk
   const dock=$(".dock",Q.el); dock.classList.toggle("typing",g.id==="naam");
   if(r){const ok=g.time?r.ok:r.d<=7;
@@ -749,7 +754,7 @@ function render(){
   }else if(g.id==="naam"){
     dock.innerHTML='<div class="typer"><input class="inp" id="typ" type="text" inputmode="search" enterkeyhint="go" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="'+(ph==="ready"?"Druk eerst op Start":"Typ de naam, bijvoorbeeld kerk")+'" aria-label="Naam van de locatie"'+(ph==="ready"?" disabled":"")+'><div class="sugg" id="sugg" role="listbox"></div></div>';
     drawSugg();
-  }else dock.innerHTML='<div class="dock-hint">'+(ph==="ready"?"De kaart staat klaar.":Q.zoom?"Ingezoomd: tik het juiste "+(g.id==="tik"?"rondje":"punt")+" aan.":g.id==="tik"?"Tik het juiste rondje aan.":"Tik op de kaart waar het ligt.")+"</div>";
+  }else dock.innerHTML='<div class="dock-hint">'+(ph==="ready"?"De kaart staat klaar.":Q.zoom?"Ingezoomd: tik het juiste "+(g.id==="tik"?"rondje":"punt")+" aan.":g.id==="tik"?"Tik waar het rondje ligt om in te zoomen.":"Tik op de kaart waar het ligt.")+"</div>";
   // focus
   const ti=$("#typ",Q.el), nx=$("#next",Q.el)||$("#go",Q.el);
   if(ti&&ph==="ask")ti.focus({preventScroll:true}); else if(nx&&matchMedia("(hover:hover)").matches)nx.focus({preventScroll:true});
@@ -786,8 +791,8 @@ function answer(res){
 function onMapTap(p,t){
   if(!Q||Q.phase!=="ask"||Q.g.id==="naam")return; const mv=Q.mv;
   if(Q.g.id==="tik"){
+    if(!Q.zoom){zoomIn(p);return} // eerste tik zoomt altijd in, op elk scherm: zo weet je altijd wat een tik doet
     const hit=Math.max(26,22/mv.s); let best=null; LOCS.forEach(l=>{const d=Math.hypot(l.x-p.x,l.y-p.y);if(d<=hit&&(!best||d<best.d))best={d,l}}); if(!best)return;
-    if(!Q.zoom&&LOCS.some(l=>l!==best.l&&Math.hypot(l.x-best.l.x,l.y-best.l.y)<CLUSTER)){zoomIn(p);return}
     answer({ok:best.l.n===Q.list[Q.i].n,pick:best.l.n,gx:best.l.x,gy:best.l.y});return}
   if(!Q.zoom&&mv.s<SMALL_S){zoomIn(p);return}
   const d=Math.round(GEO.meters(p,Q.list[Q.i])); answer({gx:Math.round(p.x),gy:Math.round(p.y),d,pts:distPts(d)});
@@ -817,7 +822,7 @@ function finish(){
   const prevBest=Scores.best(Q.mode,Q.name);
   const run={n:Q.name,mode:Q.mode,score:total,avg:Math.round(avg*100)/100,sec:Math.round(Q.used/10)/100,ts,max};
   Scores.add(run); Q.phase="done"; Q.mv.destroy();
-  const board=Scores.board(Q.mode), place=board.findIndex(r=>r.mine&&nkey(r.n)===nkey(Q.name))+1, best=Scores.best(Q.mode,Q.name), isBest=best&&best.ts===ts;
+  const board=Scores.board(Q.mode), row=board.find(r=>r.mine&&nkey(r.n)===nkey(Q.name)), best=Scores.best(Q.mode,Q.name), isBest=best&&best.ts===ts;
   const pct=total/max, stars=pct>=.9?3:pct>=.7?2:pct>=.4?1:0;
   const kpi=g.time?[["Goed",Q.res.filter(x=>x.ok).length+" van "+Q.res.length],["Gemiddeld",nlS(avg)+" s"],["Tijd",mmss(run.sec)]]:[["Raak",Q.res.filter(x=>x.d<=7).length+" van "+Q.res.length],["Gemiddeld ernaast",Math.round(avg)+" m"],["Tijd",mmss(run.sec)]];
   const hist=Scores.history(Q.mode,Q.name).slice(-5), hmax=Math.max(1,...hist.map(h=>h.score));
@@ -825,7 +830,7 @@ function finish(){
   Q.el.innerHTML='<div class="res-wrap"><div class="res-top"><button class="btn ghost" data-q="other">← Spellen</button><span class="muted">'+esc(Q.name)+"</span></div>"+
     '<section class="result">'+TOPO+'<div class="stars" aria-label="'+stars+' van 3 sterren">'+[1,2,3].map(i=>'<svg viewBox="0 0 24 24" class="'+(i<=stars?"on":"")+'" style="--d:'+(250+i*130)+'ms"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z"/></svg>').join("")+"</div>"+
     '<div class="big disp num" data-to="'+total+'">0</div><div class="of">van '+nlN(max)+" punten · "+g.title+" · "+(Q.len==="all"?"alle "+LOCS.length:"10")+" locaties</div>"+
-    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(place?"Plek "+place+" van "+board.length+" op de ranglijst":"")+(!isBest&&best?" · jouw beste blijft "+nlN(best.score):"")+"</div>"+
+    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(row?(row.ref?"Referentiescore, telt niet mee":"Plek "+row.rank+" van "+board.filter(r=>!r.ref).length+" op de ranglijst"):"")+(!isBest&&best?" · jouw beste blijft "+nlN(best.score):"")+"</div>"+
     '<dl class="kpi">'+kpi.map(x=>"<div><dt>"+x[0]+'</dt><dd class="disp num">'+x[1]+"</dd></div>").join("")+'</dl><div class="acts"><button class="btn pri lg" data-q="again">Nog een keer</button><button class="btn lg" data-q="other">Ander spel</button></div></section>'+
     '<div class="grid3"><section class="card"><h3 class="disp">Per locatie</h3><ol class="per">'+Q.res.map(x=>{const ok=g.time?x.ok:x.d<=7;
       return '<li class="'+(g.time?(ok?"ok":"bad"):"")+'"><span class="i"'+(g.time?"":' style="background:'+qCol(x.pts)+'"')+">"+(ok?"✓":g.time?"✗":"")+'</span><span class="n">'+esc(x.n)+(g.time&&!ok&&x.pick?"<small>jij: "+esc(x.pick)+"</small>":"")+'</span><span class="d">'+(g.time?(ok?nlS(x.s)+" s":"fout"):x.d+" m")+'</span><span class="p">'+(x.pts?"+"+nlN(x.pts):"0")+"</span></li>"}).join("")+"</ol></section>"+
