@@ -247,10 +247,10 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .rank li.you{background:var(--op-soft)!important;box-shadow:inset 3px 0 0 var(--op)}
 .rank li.now{outline:2px solid var(--op);outline-offset:-2px}
 .rank .tag{font-style:normal;font-size:11.5px;font-weight:700;color:var(--op-ink);margin-left:6px}
-.rank li.ref{background:transparent!important;box-shadow:inset 0 0 0 1.5px var(--line-2);border-radius:11px}
-.rank li.ref .rk{color:var(--ink-3)}
-.rank li.ref .sc{color:var(--ink-2)}
-.rank .tag.ref{color:var(--ink-3);font-weight:650}
+.hc-box{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line-2)}
+.hc-h{display:block;font-size:13px;font-weight:650;color:var(--ink-3);margin:0 0 4px 8px}
+.rank li.hc{background:transparent!important}
+.rank li.hc .sc{color:var(--ink-2)}
 .rank-me{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line-2)}
 .board .all{margin-top:10px;width:100%}
 .empty{border:1.5px dashed var(--line-2);border-radius:14px;padding:22px 16px;text-align:center;color:var(--ink-2)}

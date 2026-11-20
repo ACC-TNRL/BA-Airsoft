@@ -311,7 +311,7 @@ const Scores=(()=>{
   let runs=store.get("runs",[]);              // eigen potjes: {n,mode,score,avg,sec,ts,max}
   let remote=store.get("remote",{});          // laatst bekende online scores: topic -> rij
   const listeners=new Set(); let clients=[], lastBroadcast=0;
-  const REF=/raymond/i; // namen met "Raymond" spelen buiten mededinging: ze staan als referentie in de lijst, zonder plek
+  const REF=/raymond/i; // namen met "Raymond" (de maker) tellen niet mee voor de plekken; zijn beste score staat apart onder de ranglijst
   /* Beheer: alles wissen. Het wis-bericht is ondertekend met de beheercode (ECDSA P-256);
      elk toestel controleert de handtekening met de publieke sleutel hieronder. Zonder code kan niemand wissen. */
   const ADMIN={kty:"EC",crv:"P-256",x:"IKeyFt1rgTZNTnCbVyz_YypRRDNSaJpeRp25j9Bbapw",y:"ho0zAvhct_htWWMfqC8eFwTpIU3sx8jzeQER5Vp-YzE"};
@@ -370,8 +370,11 @@ const Scores=(()=>{
     clients=BROKERS.map(u=>mqttClient(u,onMsg,()=>{emit();if(Date.now()-lastBroadcast>4000&&clients.some(c=>c.alive)){lastBroadcast=Date.now();setTimeout(broadcastAll,800)}}));
     clients.forEach(c=>{c.subscribe(RESET);c.subscribe(ROOT+"#")});
   }
+  function disconnect(){ // slapen: verbindingen dicht; bij connect() komt alles weer binnen (de servers bewaren de scores)
+    if(!clients.length)return; const old=clients; clients=[]; old.forEach(c=>c.close()); emit();
+  }
   return{
-    connect, on(f){listeners.add(f);return()=>listeners.delete(f)},
+    connect, disconnect, on(f){listeners.add(f);return()=>listeners.delete(f)},
     get online(){return clients.some(c=>c.alive)},
     add(run){runs.push(run);
       // per naam en spel: laatste 20 potjes en altijd de beste
@@ -595,7 +598,7 @@ function pageGames(v){
   v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Spellen</h1><p>Leer waar alles ligt op het veld. Elke vraag is maximaal 1000 punten waard.</p></div>'+lenSeg()+"</div>"+
     '<div class="games">'+GAMES.map((g,i)=>{const mode=g.id+"-"+len, name=store.get("lastName",""), best=name?Scores.best(mode,name):null, board=Scores.board(mode), row=best?board.find(r=>nkey(r.n)===nkey(name)):null;
       return '<article class="game"><div class="game-art">'+gameArt(g.id)+'</div><div class="game-b"><h2 class="disp"><span class="ctl" aria-hidden="true">'+(i+1)+"</span>"+g.title+"</h2><p>"+g.desc+'</p><div class="game-meta"><span class="chip op">'+g.rule+"</span>"+
-        (best?'<span class="best">Jouw beste <b>'+nlN(best.score)+"</b>"+(row?(row.ref?" · referentie":" · plek "+row.rank):"")+"</span>":'<span class="muted">Nog niet gespeeld</span>')+'</div></div><button class="btn pri lg" data-play="'+g.id+'">Speel '+N+"</button></article>"}).join("")+"</div></div>";
+        (best?'<span class="best">Jouw beste <b>'+nlN(best.score)+"</b>"+(row&&!row.ref?" · plek "+row.rank:"")+"</span>":'<span class="muted">Nog niet gespeeld</span>')+'</div></div><button class="btn pri lg" data-play="'+g.id+'">Speel '+N+"</button></article>"}).join("")+"</div></div>";
   };
   draw();
   v.onclick=e=>{const b=e.target.closest("[data-len]");if(b){store.set("len",b.dataset.len);draw();return}
@@ -606,17 +609,19 @@ function pageGames(v){
 
 /* ---------- ranglijst ---------- */
 function rankRow(r,i,me,ic,mark){const you=me>=0&&i===me;
-  return '<li class="'+(r.ref?"ref":r.rank<=3?"m"+r.rank:"")+(you?" you":"")+(mark&&r.ts===mark&&r.mine?" now":"")+'"><span class="rk"'+(r.ref?' aria-label="Referentie, telt niet mee">–':">"+r.rank)+'</span><span class="nm"><b>'+esc(r.n)+(r.ref?'<i class="tag ref">referentie</i>':"")+(you?'<i class="tag">jij</i>':"")+"</b><small>"+mmss(r.sec)+" · "+(ic?nlS(r.avg)+" s gem.":Math.round(r.avg)+" m gem.")+'</small></span><span class="sc">'+nlN(r.score)+"</span></li>"}
+  return '<li class="'+(r.ref?"hc":r.rank<=3?"m"+r.rank:"")+(you?" you":"")+(mark&&r.ts===mark&&r.mine?" now":"")+'"><span class="rk">'+(r.ref?"":r.rank)+'</span><span class="nm"><b>'+esc(r.n)+(you?'<i class="tag">jij</i>':"")+"</b><small>"+mmss(r.sec)+" · "+(ic?nlS(r.avg)+" s gem.":Math.round(r.avg)+" m gem.")+'</small></span><span class="sc">'+nlN(r.score)+"</span></li>"}
+// de maker (alle namen met "Raymond") staat los onder de ranglijst: één regel met zijn beste score, zonder plek
+function hcHTML(rows,me,ic,mark){const r=rows.find(x=>x.ref); // rijen zijn al gesorteerd, dus dit is de beste
+  return r?'<div class="hc-box"><span class="hc-h">Score van de maker</span><ol class="rank">'+rankRow(Object.assign({},r,{n:"Raymond"}),-1,me,ic,mark)+"</ol></div>":""}
 function boardHTML(mode,g,max,mark){
   const rows=Scores.board(mode), name=store.get("lastName",""), me=rows.findIndex(r=>r.mine&&nkey(r.n)===nkey(name)), ic=g.time;
   if(!rows.length)return '<div class="empty">Nog geen scores. Speel als eerste en zet de lat.</div>';
-  // top "max" van de spelers die meedingen; referentiescores staan ertussen op hun eigen hoogte en blijven altijd zichtbaar
-  const ranked=rows.filter(r=>!r.ref), cut=ranked.length>max?rows.indexOf(ranked[max]):rows.length;
-  let h='<ol class="rank">'+rows.slice(0,cut).map((r,i)=>rankRow(r,i,me,ic,mark)).join("")+"</ol>";
-  const extra=rows.map((r,i)=>[r,i]).slice(cut).filter(([r,i])=>r.ref||i===me);
-  if(extra.length)h+='<ol class="rank rank-me">'+extra.map(([r,i])=>rankRow(r,i,me,ic,mark)).join("")+"</ol>";
+  const ranked=rows.map((r,i)=>[r,i]).filter(([r])=>!r.ref);
+  let h=ranked.length?'<ol class="rank">'+ranked.slice(0,max).map(([r,i])=>rankRow(r,i,me,ic,mark)).join("")+"</ol>":'<div class="empty">Nog geen scores van deelnemers.</div>';
+  const mine=ranked.slice(max).find(([r,i])=>i===me);
+  if(mine)h+='<ol class="rank rank-me">'+rankRow(mine[0],mine[1],me,ic,mark)+"</ol>";
   if(ranked.length>max)h+='<button class="btn all" data-all="'+mode+'">Hele lijst ('+ranked.length+")</button>";
-  return h;
+  return h+hcHTML(rows,me,ic,mark);
 }
 function pageRank(v){
   const draw=()=>{const len=LEN();
@@ -669,7 +674,7 @@ function dialog(html,onOpen){
 function confirmDlg(t,p,ok,fn,kind){dialog('<h2 class="disp">'+t+"</h2><p>"+p+'</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn" data-c>Annuleren</button><button class="btn '+(kind||"pri")+'" data-ok>'+ok+"</button></div>",(d,close)=>{d.querySelector("[data-c]").onclick=close;d.querySelector("[data-ok]").onclick=()=>{close();fn()};d.querySelector("[data-ok]").focus()})}
 function showAll(mode,g){
   const rows=Scores.board(mode), name=store.get("lastName",""), me=rows.findIndex(r=>r.mine&&nkey(r.n)===nkey(name));
-  dialog('<h2 class="disp">'+g.title+"</h2><p>"+(mode.endsWith("all")?"Alle "+LOCS.length+" locaties":"10 locaties")+" · "+plural(rows.filter(r=>!r.ref).length,"speler","spelers")+'</p><ol class="rank">'+rows.map((r,i)=>rankRow(r,i,me,g.time)).join("")+"</ol>",d=>{const y=d.querySelector(".you");if(y&&me>6)y.scrollIntoView({block:"center"})});
+  dialog('<h2 class="disp">'+g.title+"</h2><p>"+(mode.endsWith("all")?"Alle "+LOCS.length+" locaties":"10 locaties")+" · "+plural(rows.filter(r=>!r.ref).length,"speler","spelers")+'</p><ol class="rank">'+rows.map((r,i)=>[r,i]).filter(([r])=>!r.ref).map(([r,i])=>rankRow(r,i,me,g.time)).join("")+"</ol>"+hcHTML(rows,me,g.time),d=>{const y=d.querySelector(".you");if(y&&me>6)y.scrollIntoView({block:"center"})});
 }
 function askName(done){ // eerst kiezen wie er speelt
   const names=Scores.myNames().concat(store.get("names",[])).filter((n,i,a)=>a.findIndex(x=>nkey(x)===nkey(n))===i).slice(0,8);
@@ -833,7 +838,7 @@ function finish(){
   Q.el.innerHTML='<div class="res-wrap"><div class="res-top"><button class="btn ghost" data-q="other">← Spellen</button><span class="muted">'+esc(Q.name)+"</span></div>"+
     '<section class="result">'+TOPO+'<div class="stars" aria-label="'+stars+' van 3 sterren">'+[1,2,3].map(i=>'<svg viewBox="0 0 24 24" class="'+(i<=stars?"on":"")+'" style="--d:'+(250+i*130)+'ms"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z"/></svg>').join("")+"</div>"+
     '<div class="big disp num" data-to="'+total+'">0</div><div class="of">van '+nlN(max)+" punten · "+g.title+" · "+(Q.len==="all"?"alle "+LOCS.length:"10")+" locaties</div>"+
-    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(row?(row.ref?"Referentiescore, telt niet mee":"Plek "+row.rank+" van "+board.filter(r=>!r.ref).length+" op de ranglijst"):"")+(!isBest&&best?" · jouw beste blijft "+nlN(best.score):"")+"</div>"+
+    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(row?(row.ref?"Maker van de app":"Plek "+row.rank+" van "+board.filter(r=>!r.ref).length+" op de ranglijst"):"")+(!isBest&&best?" · jouw beste blijft "+nlN(best.score):"")+"</div>"+
     '<dl class="kpi">'+kpi.map(x=>"<div><dt>"+x[0]+'</dt><dd class="disp num">'+x[1]+"</dd></div>").join("")+'</dl><div class="acts"><button class="btn pri lg" data-q="again">Nog een keer</button><button class="btn lg" data-q="other">Ander spel</button></div></section>'+
     '<div class="grid3"><section class="card"><h3 class="disp">Per locatie</h3><ol class="per">'+Q.res.map(x=>{const ok=g.time?x.ok:x.d<=7;
       return '<li class="'+(g.time?(ok?"ok":"bad"):"")+'"><span class="i"'+(g.time?"":' style="background:'+qCol(x.pts)+'"')+">"+(ok?"✓":g.time?"✗":"")+'</span><span class="n">'+esc(x.n)+(g.time&&!ok&&x.pick?"<small>jij: "+esc(x.pick)+"</small>":"")+'</span><span class="d">'+(g.time?(ok?nlS(x.s)+" s":"fout"):x.d+" m")+'</span><span class="p">'+(x.pts?"+"+nlN(x.pts):"0")+"</span></li>"}).join("")+"</ol></section>"+
@@ -858,7 +863,11 @@ const TOPO='<svg class="topo" viewBox="0 0 600 220" preserveAspectRatio="xMidYMi
 /* ---------- opstarten ---------- */
 shell(); go();
 addEventListener("hashchange",()=>{if(Q)stopGame();go()});
-Scores.on(liveBadge); liveBadge(); Scores.connect();
+Scores.on(liveBadge); liveBadge();
+// alleen verbonden als de app in beeld is: een tabblad op de achtergrond of een vergrendelde telefoon gaat na 20 s slapen
+let nap=0;
+document.addEventListener("visibilitychange",()=>{clearTimeout(nap);if(document.hidden)nap=setTimeout(Scores.disconnect,20000);else Scores.connect()});
+if(!document.hidden)Scores.connect();
 if("serviceWorker" in navigator&&location.protocol==="https:")navigator.serviceWorker.register("sw.js").catch(()=>{});
 window.BAVELD={get Q(){return Q},LOCS,GEO,Scores}; // voor tests
 
