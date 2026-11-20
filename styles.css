@@ -156,7 +156,24 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .tgl input::after{content:"";position:absolute;width:20px;height:20px;border-radius:50%;background:#fff;top:3px;left:3px;transition:transform .15s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
 .tgl input:checked{background:var(--op)}
 .tgl input:checked::after{transform:translateX(16px)}
-.layers .seg{width:100%;margin-top:8px}.layers .seg button{flex:1}
+.layers .seg{width:100%;margin-top:8px}.layers .seg button{flex:1;padding:0 8px}
+.layers h3.lh2{margin-top:16px}
+/* alle namen: icoon en naam als één label dat met de kaart meeschaalt, zoals op een gedrukte kaart */
+.nm{position:absolute;display:flex;align-items:center;gap:.3em;font-size:calc(var(--zs,1) * 14px);line-height:1.1;white-space:nowrap;
+  background:rgba(26,28,25,.86);color:#fff;border-radius:999px;padding:.14em .62em .14em .14em;box-shadow:0 1px 3px rgba(0,0,0,.25);
+  left:-1.015em;top:-1.015em}
+.nm>svg{width:1.75em;height:1.75em;flex:none;filter:none}
+.nm>b{font-weight:700;letter-spacing:.005em}
+.nm.s-l{flex-direction:row-reverse;padding:.14em .14em .14em .62em;left:auto;right:-1.015em}
+.nm.s-t,.nm.s-b{flex-direction:column;gap:.12em;border-radius:.95em;padding:.3em .55em .14em;left:0;transform:translateX(-50%)}
+.nm.s-t{flex-direction:column-reverse;padding:.3em .55em .14em;top:auto;bottom:-1.015em}
+.nm.s-b{padding:.14em .55em .3em}
+.nm.s-c{padding:.25em .6em;left:0;top:0;transform:translate(-50%,-50%)}.nm.s-c>svg{display:none} /* Winkels: alleen de naam, op de gebouwen */
+.mk.nmk.sel{z-index:3}
+.mk.nmk.sel .nm{background:var(--op)}
+.mk.nmk.sel::before{display:none}
+.mk.dim{opacity:.35}
+.all-names .mk.flag>svg{width:calc(var(--zs,1) * 24px);height:calc(var(--zs,1) * 24px);left:calc(var(--zs,1) * -12px);top:calc(var(--zs,1) * -12px)}
 .loc{position:absolute;left:38px;bottom:22px;width:min(380px,calc(100% - 100px));background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);padding:16px 16px 14px;animation:up .18s ease-out}
 .loc-h{display:flex;align-items:center;gap:14px;padding-right:34px}
 .loc-h h2{margin:0;font-size:24px}

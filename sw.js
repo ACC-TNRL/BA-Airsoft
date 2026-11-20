@@ -1,5 +1,5 @@
 /* Offline: de app zelf staat in de cache; de luchtfoto en 3D-module worden bewaard zodra ze een keer geladen zijn. */
-const V="baveld-fa7925ab", CORE=["./","./index.html","./app.js?v=fa7925ab","./styles.css?v=fa7925ab","./fonts/archivo.woff2","./manifest.webmanifest","./icons/icon-192.png","./icons/icon-512.png"];
+const V="baveld-009ec961", CORE=["./","./index.html","./app.js?v=009ec961","./styles.css?v=009ec961","./fonts/archivo.woff2","./manifest.webmanifest","./icons/icon-192.png","./icons/icon-512.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(CORE)).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==V&&x!=="baveld-ext").map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
 self.addEventListener("fetch",e=>{

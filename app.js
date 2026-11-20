@@ -137,7 +137,7 @@ const flagIcon=(t,size)=>'<svg viewBox="-15 -15 30 30" width="'+size+'" height="
 function areaMarks(o){
   const m=[{x:298,y:440,html:'<span class="area area-safe">Safe zone</span>',cls:"amk"}];
   if(o.zones!==false)m.push({x:(COLX(14)+COLX(17))/2,y:ROWY(SEMI.r1+1)-14,html:'<span class="area area-semi">Alleen semi-auto</span>',cls:"amk"},{x:DEATHZONE.x,y:DEATHZONE.y,html:'<span class="area area-dz">Deathzone</span>',cls:"amk"});
-  if(o.small)m.push({x:SMALL_X/2+20,y:680,html:'<span class="area area-small">Niet op het klein veld</span>',cls:"amk"});
+  if(o.small)m.push({x:SMALL_X/2+20,y:612,html:'<span class="area area-small">Niet op het klein veld</span>',cls:"amk"});
   return m;
 }
 
@@ -205,6 +205,7 @@ class MapView{
     this.svg.setAttribute("viewBox",(this.cx-vw/2)+" "+(this.cy-vh/2)+" "+vw+" "+vh);
     const mk=Math.round(Math.max(20,Math.min(34,13+17*Math.sqrt(this.s))));
     this.el.style.setProperty("--mk",mk+"px");
+    this.el.style.setProperty("--zs",Math.min(1.08,this.s).toFixed(3)); // schaal voor namen die met de kaart meegroeien
     for(const m of this.marks){const p=this.toScreen(m.x,m.y);m.sx=p.x;m.sy=p.y;m.el.style.transform="translate("+p.x.toFixed(1)+"px,"+p.y.toFixed(1)+"px)"}
     this.layoutLabels(mk);
     if(this.rt){
@@ -451,7 +452,8 @@ function go(){
 }
 
 /* ---------- kaart ---------- */
-const MAPPREF=Object.assign({names:true,grid:true,zones:true,field:"groot",view:"2d"},store.get("mappref",{}));
+const MAPPREF=Object.assign({names:"alle",grid:true,zones:true,field:"groot",view:"2d"},store.get("mappref",{}));
+if(typeof MAPPREF.names!=="string")MAPPREF.names=MAPPREF.names===false?"uit":"alle"; // oude instelling (aan/uit) omzetten
 const saveMapPref=()=>store.set("mappref",MAPPREF);
 function pageMap(v){
   v.className="full";
@@ -459,17 +461,26 @@ function pageMap(v){
     '<div class="search" role="search"><div class="field">'+IC.search+'<input id="q" type="search" placeholder="Zoek een locatie" autocomplete="off" spellcheck="false" aria-label="Zoek een locatie" aria-controls="qres"><button class="clear" id="qx" aria-label="Wissen" hidden>×</button></div><div class="results" id="qres" role="listbox"></div></div>'+
     '<div class="seg viewsw" role="group" aria-label="Weergave"><button data-view="2d">Kaart</button><button data-view="3d">3D</button></div>'+
     '<div class="ctrls" id="ctrl2d"><div class="ctrl-group"><button class="icon-btn" id="zin" aria-label="Inzoomen">'+IC.plus+'</button><button class="icon-btn" id="zout" aria-label="Uitzoomen">'+IC.minus+'</button></div><button class="icon-btn" id="zfit" aria-label="Hele veld">'+IC.fit+'</button><button class="icon-btn" id="lay" aria-label="Lagen" aria-expanded="false">'+IC.layers+'</button></div>'+
-    '<div class="layers" id="layers" hidden><h3>Op de kaart</h3>'+[["names","Namen"],["grid","Vakken"],["zones","Zones"]].map(t=>'<label class="tgl">'+t[1]+'<input type="checkbox" data-pref="'+t[0]+'"'+(MAPPREF[t[0]]?" checked":"")+"></label>").join("")+
+    '<div class="layers" id="layers" hidden><h3>Namen</h3><div class="seg" role="group" aria-label="Namen"><button data-names="alle">Alle</button><button data-names="past">Wat past</button><button data-names="uit">Uit</button></div>'+
+    '<h3 class="lh2">Op de kaart</h3>'+[["grid","Vakken"],["zones","Zones"]].map(t=>'<label class="tgl">'+t[1]+'<input type="checkbox" data-pref="'+t[0]+'"'+(MAPPREF[t[0]]?" checked":"")+"></label>").join("")+
     '<div class="seg" role="group" aria-label="Veld"><button data-field="groot">Groot veld</button><button data-field="klein">Klein veld</button></div></div>'+
     '<div class="loc" id="loc" hidden></div></div></section>';
   let sel=null;
   const mv=new MapView($("#mv"),{rulers:true,pad:34,bounds:[GRID.x0-16,GRID.y0-16,COLX(GRID.cols)+16,ROWY(GRID.rows)+16],maxS:6,
     insets:isPhone()?{t:64,r:0,b:0,l:0}:{t:96,r:60,b:0,l:0},
-    onReady:m=>m.fit(FIELD_BOX,0,isPhone()?8:20),
-    onTap:(p,t)=>{const k=mv.nearestMark(t.px,t.py,28,m=>m.loc);select(k?k.loc:null)}});
+    onReady:m=>{m.fit(FIELD_BOX,0,isPhone()?8:20);
+      // alle namen op een smal scherm: start op leesbare grootte, linksboven in het veld (schuif voor de rest)
+      if(MAPPREF.names==="alle"&&isPhone()&&m.s<.68){const s=.72;m.to({s,cx:FIELD_BOX[0]-6+(m.w/2-30)/s,cy:FIELD_BOX[1]-10+(m.h/2-74)/s},0)}},
+    onTap:(p,t)=>{let k=null;
+      if(MAPPREF.names==="alle"&&t.e){const X=t.e.clientX,Y=t.e.clientY; // tik op een label telt, ook op de tekst
+        k=mv.marks.slice().reverse().find(m=>{if(!m.loc)return false;const b=m.el.firstElementChild.getBoundingClientRect();return X>=b.left-3&&X<=b.right+3&&Y>=b.top-3&&Y<=b.bottom+3})}
+      k=k||mv.nearestMark(t.px,t.py,28,m=>m.loc);select(k?k.loc:null)}});
   const drawBase=()=>mv.setBase(baseMapSVG({grid:MAPPREF.grid,zones:MAPPREF.zones,small:MAPPREF.field==="klein"}));
-  const drawMarks=()=>{mv.noLabels=!MAPPREF.names;
-    mv.setMarks(areaMarks({zones:MAPPREF.zones,small:MAPPREF.field==="klein"}).concat(LOCS.map(l=>({x:l.x,y:l.y,html:iconSVG(l.n,36),label:l.n,side:l.side,prio:sel===l?9:1,loc:l,cls:(sel===l?"sel ":"")+(MAPPREF.field==="klein"&&!inSmall(l)?"dim":"")})),
+  const drawMarks=()=>{const all=MAPPREF.names==="alle"; mv.noLabels=MAPPREF.names==="uit"; $("#mv").classList.toggle("all-names",all);
+    const dim=l=>MAPPREF.field==="klein"&&!inSmall(l)?" dim":"";
+    mv.setMarks(areaMarks({zones:MAPPREF.zones,small:MAPPREF.field==="klein"}).concat(LOCS.map(l=>all
+      ? {x:l.x,y:l.y,html:'<span class="nm s-'+(l.n==="Winkels"?"c":l.side)+'">'+iconSVG(l.n,36)+"<b>"+esc(l.n)+"</b></span>",loc:l,cls:"nmk"+(sel===l?" sel":"")+dim(l)} // naam en icoon als één label, groeit mee met de kaart
+      : {x:l.x,y:l.y,html:iconSVG(l.n,36),label:l.n,side:l.side,prio:sel===l?9:1,loc:l,cls:(sel===l?"sel":"")+dim(l)}),
       SPAWNS.map(p=>({x:p[0],y:p[1],html:flagIcon(p[2],30),cls:"flag"}))))};
   drawBase(); drawMarks();
   function select(l,fly){
@@ -497,8 +508,9 @@ function pageMap(v){
   $("#zfit").onclick=()=>mv.fit(FIELD_BOX,380,isPhone()?8:20);
   const lay=$("#layers"); $("#lay").onclick=()=>{lay.hidden=!lay.hidden;$("#lay").setAttribute("aria-expanded",!lay.hidden)};
   lay.addEventListener("change",e=>{const k=e.target.dataset.pref;if(!k)return;MAPPREF[k]=e.target.checked;saveMapPref();drawBase();drawMarks()});
-  const segSync=()=>{$$("[data-field]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.field===MAPPREF.field));$$("[data-view]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.view===MAPPREF.view))};
-  lay.addEventListener("click",e=>{const b=e.target.closest("[data-field]");if(!b)return;MAPPREF.field=b.dataset.field;saveMapPref();segSync();drawBase();drawMarks()});
+  const segSync=()=>{$$("[data-names]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.names===MAPPREF.names));$$("[data-field]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.field===MAPPREF.field));$$("[data-view]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.view===MAPPREF.view))};
+  lay.addEventListener("click",e=>{const n=e.target.closest("[data-names]");if(n){MAPPREF.names=n.dataset.names;saveMapPref();segSync();drawMarks();return}
+    const b=e.target.closest("[data-field]");if(!b)return;MAPPREF.field=b.dataset.field;saveMapPref();segSync();drawBase();drawMarks()});
   const closeLay=e=>{if(!lay.hidden&&!e.target.closest("#layers,#lay")){lay.hidden=true;$("#lay").setAttribute("aria-expanded","false")}if(!e.target.closest(".search")&&res.innerHTML&&document.activeElement!==q){}};
   document.addEventListener("pointerdown",closeLay);
   // 2D / 3D
