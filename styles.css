@@ -232,6 +232,15 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .boards{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 @media (max-width:980px){.boards{grid-template-columns:1fr}}
 .board{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px 16px 14px}
+.board-tot{margin-bottom:16px}
+.board-sub{margin:-6px 0 12px;color:var(--ink-3);font-size:14px;max-width:70ch}
+.len-note{margin:-12px 0 22px;color:var(--ink-2);font-size:15.5px;max-width:70ch}
+.len-note b{display:block;margin-top:4px;color:var(--ink);font-weight:700}
+.rank .nm small.parts{display:flex;gap:10px;flex-wrap:wrap;margin-top:1px}
+.rank .parts span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.rank .parts i{font-style:normal;width:15px;height:15px;border-radius:50%;border:1.5px solid var(--op);color:var(--op-ink);font-size:9px;font-weight:800;display:inline-grid;place-items:center;line-height:1}
+.rank .parts span.no{opacity:.5}
+@media (max-width:760px){.rank .nm small.parts{gap:7px;font-size:12px}.rank .parts span{gap:3px}.rank .parts i{width:14px;height:14px;font-size:8.5px}}
 .board-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 .board-h h2{margin:0;font-size:22px;flex:1}
 .board-h small{color:var(--ink-3);font-weight:600}
@@ -318,7 +327,10 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 @media (max-width:760px){.fb{grid-template-columns:36px minmax(0,1fr) auto;gap:10px;padding:0 8px 0 10px}.fb .i{width:34px;height:34px;font-size:18px}.fb .pts{display:none}.fb .t b{font-size:19px}.fb .btn{min-width:0;padding:0 16px}}
 @keyframes pts{0%{transform:scale(.5);opacity:0}70%{transform:scale(1.12)}}
 .typer{display:grid;gap:8px}
-.typer .inp{height:50px}
+.typer .inp{height:50px;min-width:0}
+.typ-row{display:flex;gap:8px}
+.typ-row .inp{flex:1}
+.typer .btn.skip{height:50px;flex:none;padding:0 16px}
 .sugg{display:flex;gap:6px;overflow-x:auto;height:44px;align-items:center;scrollbar-width:none}
 .sugg::-webkit-scrollbar{display:none}
 .sugg button{flex:none;height:42px;border-radius:11px;border:1.5px solid var(--line-2);background:var(--surface);padding:0 14px;font-weight:650;white-space:nowrap}

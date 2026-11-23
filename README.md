@@ -21,7 +21,9 @@ Upload de nieuwe bestanden opnieuw in dezelfde repository en overschrijf de oude
 
 ## Ranglijst
 
-- Per speler telt de beste score, per spel en per lengte (10 locaties of alle 34). Bij een gelijke score wint de snelste.
+- Er zijn twee soorten potjes: **Oefenen** (10 willekeurige locaties) en **Officieel** (alle 34). Elk heeft per spel een eigen ranglijst; per speler telt de beste score, bij een gelijke score wint de snelste.
+- **Officiële ranglijst:** per speler de beste officiële scores van de drie spellen opgeteld. Een spel dat iemand nog niet speelde telt als 0, dus ook wie één of twee spellen speelde staat erin.
+- Namen met "Raymond" erin tellen niet mee voor de plekken; die beste score staat apart onder elke lijst als "Score van de maker".
 - Scores gaan zonder account via openbare MQTT-servers (EMQX, HiveMQ en Mosquitto). Elke telefoon stuurt bij het openen zijn eigen beste scores opnieuw, zodat de lijst zich herstelt als een server iets kwijtraakt.
 - Zonder bereik speel je gewoon door; je score gaat mee zodra er weer verbinding is.
 - Onder de ranglijst staat **Mijn scores op dit toestel wissen**. Dat haalt je scores van dit toestel ook van de online lijst.

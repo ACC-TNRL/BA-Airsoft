@@ -262,6 +262,17 @@ class MapView{
       if(!P.size)g=null; else if(P.size===1){const [a]=[...P.values()];g={type:"pan",x0:a.x,y0:a.y,cx:this.cx,cy:this.cy,t0:0,moved:99,r:el.getBoundingClientRect()}}
     };
     el.addEventListener("pointerup",up); el.addEventListener("pointercancel",up);
+    if(this.o.interactive){
+      // twee vingers: de browser mag niet zelf de pagina zoomen (iPhone negeert dat soms), de kaart doet het
+      el.addEventListener("touchmove",e=>{if(e.touches.length>1)e.preventDefault()},{passive:false});
+      // Safari: eigen knijpgebaar. Werkt als reserve als de browser de pointer-events afbreekt
+      let gs=null;
+      el.addEventListener("gesturestart",e=>{e.preventDefault();const r=el.getBoundingClientRect();gs={s0:this.s,r,m:this.toMap(e.clientX-r.left,e.clientY-r.top,true)}});
+      el.addEventListener("gesturechange",e=>{e.preventDefault();if(!gs||(g&&g.type==="pinch"))return;
+        const mx=e.clientX-gs.r.left,my=e.clientY-gs.r.top;cancelAnimationFrame(this.anim);
+        this.s=Math.max(this.minS(),Math.min(this.o.maxS,gs.s0*e.scale));this.cx=gs.m.x-(mx-this.w/2)/this.s;this.cy=gs.m.y-(my-this.h/2)/this.s;this.clamp();this.draw()});
+      el.addEventListener("gestureend",e=>{e.preventDefault();gs=null});
+    }
     el.addEventListener("wheel",e=>{if(!this.o.interactive)return;e.preventDefault();const r=el.getBoundingClientRect();
       cancelAnimationFrame(this.anim);const f=Math.exp(-e.deltaY*(e.ctrlKey?.012:.0016));this.zoomAt(f,e.clientX-r.left,e.clientY-r.top,0)},{passive:false});
   }
@@ -583,7 +594,30 @@ function Map3D(box,onPick){
 
 /* ---------- spellen ---------- */
 const LEN=()=>store.get("len","10")==="all"?"all":"10";
-function lenSeg(){const l=LEN();return '<div class="seg len-sw" role="group" aria-label="Aantal locaties per potje"><button data-len="10" aria-pressed="'+(l==="10")+'">10 locaties</button><button data-len="all" aria-pressed="'+(l==="all")+'">Alle '+LOCS.length+"</button></div>"}
+function lenSeg(){const l=LEN();return '<div class="seg len-sw" role="group" aria-label="Oefenen of officieel"><button data-len="10" aria-pressed="'+(l==="10")+'">Oefenen · 10</button><button data-len="all" aria-pressed="'+(l==="all")+'">Officieel · alle '+LOCS.length+"</button></div>"}
+// officiële ranglijst: per speler de beste score per spel (alle 34) opgeteld; een spel dat nog niet gespeeld is telt als 0
+function totalBoard(){
+  const per={};
+  GAMES.forEach(g=>Scores.board(g.id+"-all").forEach(r=>{const k=r.ref?"#maker":nkey(r.n), p=per[k]||(per[k]={n:r.n,ts:0,score:0,sec:0,parts:{},secs:{},mine:false,ref:r.ref});
+    if(p.parts[g.id]!=null&&p.parts[g.id]>=r.score)return; // maker met meerdere namen: per spel de beste
+    p.score+=r.score-(p.parts[g.id]||0); p.sec+=(+r.sec||0)-(p.secs[g.id]||0); p.parts[g.id]=r.score; p.secs[g.id]=+r.sec||0;
+    p.mine=p.mine||!!r.mine; if(r.ts>p.ts){p.ts=r.ts;p.n=r.n}}));
+  let k=0; return Object.values(per).sort((a,b)=>b.score-a.score||a.sec-b.sec||a.ts-b.ts).map(r=>Object.assign(r,{played:Object.keys(r.parts).length,rank:r.ref?0:++k}));
+}
+const totalOf=name=>name?totalBoard().find(r=>Scores.isRef(name)?r.ref:(!r.ref&&nkey(r.n)===nkey(name))):null;
+function totalRow(r,i,me){const you=me>=0&&i===me;
+  return '<li class="'+(r.ref?"hc":r.rank<=3?"m"+r.rank:"")+(you?" you":"")+'"><span class="rk">'+(r.ref?"":r.rank)+'</span><span class="nm"><b>'+esc(r.ref?"Raymond":r.n)+(you?'<i class="tag">jij</i>':"")+'</b><small class="parts">'+
+    GAMES.map((g,j)=>{const v=r.parts[g.id];return '<span'+(v==null?' class="no"':"")+' title="'+g.title+'"><i>'+(j+1)+"</i>"+(v==null?"–":nlN(v))+"</span>"}).join("")+'</small></span><span class="sc">'+nlN(r.score)+"</span></li>"}
+function totalHTML(max){
+  const rows=totalBoard(), name=store.get("lastName",""), me=rows.findIndex(r=>r.mine&&!r.ref&&nkey(r.n)===nkey(name));
+  if(!rows.length)return '<div class="empty">Nog geen officiële scores. Speel een spel met alle '+LOCS.length+" locaties.</div>";
+  const ranked=rows.map((r,i)=>[r,i]).filter(([r])=>!r.ref);
+  let h=ranked.length?'<ol class="rank">'+ranked.slice(0,max).map(([r,i])=>totalRow(r,i,me)).join("")+"</ol>":'<div class="empty">Nog geen officiële scores van spelers.</div>';
+  const mine=ranked.slice(max).find(([r,i])=>i===me); if(mine)h+='<ol class="rank rank-me">'+totalRow(mine[0],mine[1],me)+"</ol>";
+  if(ranked.length>max)h+='<button class="btn all" data-all="total">Hele lijst ('+ranked.length+")</button>";
+  const mk=rows.find(r=>r.ref); if(mk)h+='<div class="hc-box"><span class="hc-h">Score van de maker</span><ol class="rank">'+totalRow(mk,-1,-1)+"</ol></div>";
+  return h;
+}
 function gameArt(id){ // een stukje echte veldkaart met de postsymbolen van het spel
   const vb=id==="plek"?"70 600 420 262":id==="naam"?"470 60 420 262":"70 62 420 262";
   const near=LOCS.filter(l=>{const p=vb.split(" ").map(Number);return l.x>p[0]+14&&l.x<p[0]+p[2]-14&&l.y>p[1]+14&&l.y<p[1]+p[3]-14});
@@ -595,7 +629,10 @@ function gameArt(id){ // een stukje echte veldkaart met de postsymbolen van het 
 }
 function pageGames(v){
   const draw=()=>{const len=LEN(), N=len==="all"?LOCS.length:10;
+  const tot=len==="all"?totalOf(store.get("lastName","")):null;
   v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Spellen</h1><p>Leer waar alles ligt op het veld. Elke vraag is maximaal 1000 punten waard.</p></div>'+lenSeg()+"</div>"+
+    '<p class="len-note">'+(len==="all"?"Officieel: alle "+LOCS.length+" locaties. Je totaal van de drie spellen komt in de officiële ranglijst."+
+      (tot?"<b>Jouw totaal "+nlN(tot.score)+(tot.ref?"":" · plek "+tot.rank)+" · "+tot.played+" van 3 gespeeld</b>":""):"Oefenen: 10 willekeurige locaties, om te oefenen.")+"</p>"+
     '<div class="games">'+GAMES.map((g,i)=>{const mode=g.id+"-"+len, name=store.get("lastName",""), best=name?Scores.best(mode,name):null, board=Scores.board(mode), row=best?board.find(r=>nkey(r.n)===nkey(name)):null;
       return '<article class="game"><div class="game-art">'+gameArt(g.id)+'</div><div class="game-b"><h2 class="disp"><span class="ctl" aria-hidden="true">'+(i+1)+"</span>"+g.title+"</h2><p>"+g.desc+'</p><div class="game-meta"><span class="chip op">'+g.rule+"</span>"+
         (best?'<span class="best">Jouw beste <b>'+nlN(best.score)+"</b>"+(row&&!row.ref?" · plek "+row.rank:"")+"</span>":'<span class="muted">Nog niet gespeeld</span>')+'</div></div><button class="btn pri lg" data-play="'+g.id+'">Speel '+N+"</button></article>"}).join("")+"</div></div>";
@@ -626,11 +663,13 @@ function boardHTML(mode,g,max,mark){
 function pageRank(v){
   const draw=()=>{const len=LEN();
     v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Ranglijst</h1><p>Per speler telt de beste score. Bij een gelijke score wint de snelste.</p></div>'+lenSeg()+"</div>"+
+      (len==="all"?'<section class="board board-tot"><div class="board-h"><h2 class="disp">Officiële ranglijst</h2><small>'+plural(totalBoard().filter(r=>!r.ref).length,"speler","spelers")+'</small></div><p class="board-sub">Je beste scores bij de drie spellen opgeteld, met alle '+LOCS.length+" locaties. Een spel dat je nog niet speelde telt als 0.</p>"+totalHTML(10)+"</section>":"")+
       '<div class="boards">'+GAMES.map((g,i)=>'<section class="board"><div class="board-h"><span class="ctl" aria-hidden="true">'+(i+1)+'</span><h2 class="disp">'+g.title+"</h2><small>"+plural(Scores.board(g.id+"-"+len).filter(r=>!r.ref).length,"speler","spelers")+"</small></div>"+boardHTML(g.id+"-"+len,g,10)+"</section>").join("")+"</div>"+
       '<div class="foot"><span>'+(Scores.online?"Live: scores van alle spelers worden gedeeld.":"Offline: je ziet de laatst bekende ranglijst. Nieuwe scores gaan mee zodra er weer verbinding is.")+'</span><button class="linkbtn" id="wipe">Mijn scores op dit toestel wissen</button></div></div>'};
   draw();
   v.onclick=e=>{const b=e.target.closest("[data-len]");if(b){store.set("len",b.dataset.len);draw();return}
-    const a=e.target.closest("[data-all]");if(a){const g=GAMES.find(x=>a.dataset.all.startsWith(x.id+"-"));showAll(a.dataset.all,g);return}
+    const a=e.target.closest("[data-all]");if(a&&a.dataset.all==="total"){showAllTotal();return}
+    if(a){const g=GAMES.find(x=>a.dataset.all.startsWith(x.id+"-"));showAll(a.dataset.all,g);return}
     if(e.target.id==="wipe")confirmDlg("Scores wissen?","Alle scores die op dit toestel gespeeld zijn verdwijnen, hier en uit de online ranglijst.","Wissen",()=>{Scores.clearMine();toast("Je scores zijn gewist");draw()})};
   let t=0; const off=Scores.on(()=>{clearTimeout(t);t=setTimeout(()=>{if(route==="ranglijst"&&!$(".dlg-bg"))draw()},200)}); cleanup=()=>{off();v.onclick=null};
 }
@@ -675,6 +714,9 @@ function confirmDlg(t,p,ok,fn,kind){dialog('<h2 class="disp">'+t+"</h2><p>"+p+'<
 function showAll(mode,g){
   const rows=Scores.board(mode), name=store.get("lastName",""), me=rows.findIndex(r=>r.mine&&nkey(r.n)===nkey(name));
   dialog('<h2 class="disp">'+g.title+"</h2><p>"+(mode.endsWith("all")?"Alle "+LOCS.length+" locaties":"10 locaties")+" · "+plural(rows.filter(r=>!r.ref).length,"speler","spelers")+'</p><ol class="rank">'+rows.map((r,i)=>[r,i]).filter(([r])=>!r.ref).map(([r,i])=>rankRow(r,i,me,g.time)).join("")+"</ol>"+hcHTML(rows,me,g.time),d=>{const y=d.querySelector(".you");if(y&&me>6)y.scrollIntoView({block:"center"})});
+}
+function showAllTotal(){
+  dialog('<h2 class="disp">Officiële ranglijst</h2><p>Alle '+LOCS.length+" locaties · "+plural(totalBoard().filter(r=>!r.ref).length,"speler","spelers")+"</p>"+totalHTML(1e9),d=>{const y=d.querySelector(".you");if(y)y.scrollIntoView({block:"center"})});
 }
 function askName(done){ // eerst kiezen wie er speelt
   const names=Scores.myNames().concat(store.get("names",[])).filter((n,i,a)=>a.findIndex(x=>nkey(x)===nkey(n))===i).slice(0,8);
@@ -748,7 +790,7 @@ function render(){
   const dots=n<=12?'<div class="dots">'+Q.list.map((_,i)=>{const x=Q.res[i];return '<i class="'+(x?(g.time?(x.ok?"ok":"bad"):""):i===Q.i?"cur":"")+'"'+(x&&!g.time?' style="background:'+qCol(x.pts)+'"':"")+"></i>"}).join("")+"</div>":'<div class="dots bar"><b style="width:'+Math.round(Q.res.length/n*100)+'%"></b></div>';
   const ask=g.id==="tik"?"Tik het rondje van":g.id==="plek"?"Waar ligt":"Welk punt licht op?";
   const big=ph==="ready"?"· · ·":g.id==="naam"?(r?cur.n:"Typ de naam"):cur.n+(g.id==="plek"?"?":"");
-  $(".hud",Q.el).innerHTML='<div class="prog">'+dots+"<span>Vraag "+(Q.i+1)+" van "+n+'</span></div><div class="q" aria-live="polite"><small>'+(g.id==="naam"&&isPhone()?"":ask)+'</small><strong class="disp'+(ph==="ready"||(g.id==="naam"&&!r)?" dim":"")+'">'+esc(big)+'</strong></div><div class="score"><small>Score</small><b class="disp num">'+nlN(total)+'</b></div><button class="quit" id="quit" aria-label="Stoppen" title="Stoppen">×</button>';
+  $(".hud",Q.el).innerHTML='<div class="prog">'+dots+"<span>Vraag "+(Q.i+1)+" van "+n+" · "+(Q.len==="all"?"Officieel":"Oefenen")+'</span></div><div class="q" aria-live="polite"><small>'+(g.id==="naam"&&isPhone()?"":ask)+'</small><strong class="disp'+(ph==="ready"||(g.id==="naam"&&!r)?" dim":"")+'">'+esc(big)+'</strong></div><div class="score"><small>Score</small><b class="disp num">'+nlN(total)+'</b></div><button class="quit" id="quit" aria-label="Stoppen" title="Stoppen">×</button>';
   // kaartlaag
   Q.mv.setGame(gameLayer());
   $("#unz").hidden=!(Q.zoom&&ph==="ask"); $(".zoomed-hint",Q.el).hidden=!(Q.zoom&&ph==="ask");
@@ -757,10 +799,10 @@ function render(){
   // onderbalk
   const dock=$(".dock",Q.el); dock.classList.toggle("typing",g.id==="naam");
   if(r){const ok=g.time?r.ok:r.d<=7;
-    const msg=g.time?(r.ok?"Goed · "+nlS(r.s)+" s":"Fout"):(ok?"Raak!":r.d+" meter ernaast"), sub=g.time&&!r.ok?(g.id==="naam"?"Je typte ":"Je koos ")+esc(r.pick||"niets"):esc(cur.n);
+    const msg=g.time?(r.ok?"Goed · "+nlS(r.s)+" s":"Fout"):(ok?"Raak!":r.d+" meter ernaast"), sub=g.time&&!r.ok?(r.skip?"Overgeslagen":(g.id==="naam"?"Je typte ":"Je koos ")+esc(r.pick||"niets")):esc(cur.n);
     dock.innerHTML='<div class="fb '+(g.time?(ok?"ok":"bad"):"")+'" role="status"'+(g.time?"":' style="background:'+qCol(r.pts)+'"')+'><span class="i" aria-hidden="true">'+(ok?"✓":g.time?"✗":"◎")+'</span><div class="t"><b class="disp">'+msg+"</b><span>"+sub+'</span></div><span class="pts disp num">+'+nlN(r.pts)+'</span><button class="btn" id="next">'+(Q.i+1<n?"Volgende":"Uitslag")+"</button></div>";
   }else if(g.id==="naam"){
-    dock.innerHTML='<div class="typer"><input class="inp" id="typ" type="text" inputmode="search" enterkeyhint="go" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="'+(ph==="ready"?"Druk eerst op Start":"Typ de naam, bijvoorbeeld kerk")+'" aria-label="Naam van de locatie"'+(ph==="ready"?" disabled":"")+'><div class="sugg" id="sugg" role="listbox"></div></div>';
+    dock.innerHTML='<div class="typer"><div class="typ-row"><input class="inp" id="typ" type="text" inputmode="search" enterkeyhint="go" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="'+(ph==="ready"?"Druk eerst op Start":"Typ de naam, bijv. kerk")+'" aria-label="Naam van de locatie"'+(ph==="ready"?" disabled":"")+'><button class="btn skip" id="skip" type="button"'+(ph==="ready"?" disabled":"")+'>Overslaan</button></div><div class="sugg" id="sugg" role="listbox"></div></div>';
     drawSugg();
   }else dock.innerHTML='<div class="dock-hint">'+(ph==="ready"?"De kaart staat klaar.":Q.zoom?"Ingezoomd: tik het juiste "+(g.id==="tik"?"rondje":"punt")+" aan.":g.id==="tik"?"Tik waar het rondje ligt om in te zoomen.":"Tik op de kaart waar het ligt.")+"</div>";
   // focus
@@ -811,6 +853,7 @@ function onPlayClick(e){
   if(b.id==="quit")return stopGame();
   if(b.id==="go")return begin();
   if(b.id==="unz"){Q.zoom=null;viewFor(230);render();return}
+  if(b.id==="skip"&&Q.phase==="ask"){answer({ok:false,pick:null,skip:true});return} // telt als fout
   if(b.dataset.ans&&Q.phase==="ask"){const cur=Q.list[Q.i];answer({ok:b.dataset.ans===cur.n,pick:b.dataset.ans});return}
   if(b.id==="next"){if(Q.i+1<Q.list.length){Q.i++;Q.phase="ready";Q.typed="";viewFor(0);begin()}else finish();return}
   if(b.dataset.q==="again"){const {g,len,name}=Q;stopGame();startGame(g.id,len,name);return}
@@ -838,10 +881,11 @@ function finish(){
   Q.el.innerHTML='<div class="res-wrap"><div class="res-top"><button class="btn ghost" data-q="other">← Spellen</button><span class="muted">'+esc(Q.name)+"</span></div>"+
     '<section class="result">'+TOPO+'<div class="stars" aria-label="'+stars+' van 3 sterren">'+[1,2,3].map(i=>'<svg viewBox="0 0 24 24" class="'+(i<=stars?"on":"")+'" style="--d:'+(250+i*130)+'ms"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z"/></svg>').join("")+"</div>"+
     '<div class="big disp num" data-to="'+total+'">0</div><div class="of">van '+nlN(max)+" punten · "+g.title+" · "+(Q.len==="all"?"alle "+LOCS.length:"10")+" locaties</div>"+
-    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(row?(row.ref?"Maker van de app":"Plek "+row.rank+" van "+board.filter(r=>!r.ref).length+" op de ranglijst"):"")+(!isBest&&best?" · jouw beste blijft "+nlN(best.score):"")+"</div>"+
+    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(Q.len==="all"?(t=>t?(t.ref?"Maker van de app · je totaal is nu "+nlN(t.score):"Je totaal is nu "+nlN(t.score)+", plek "+t.rank):"")(totalOf(Q.name))
+      :"Oefenpotje"+(row&&!row.ref?" · plek "+row.rank+" van "+board.filter(r=>!r.ref).length:""))+(!isBest&&best?" · jouw beste blijft "+nlN(best.score):"")+"</div>"+
     '<dl class="kpi">'+kpi.map(x=>"<div><dt>"+x[0]+'</dt><dd class="disp num">'+x[1]+"</dd></div>").join("")+'</dl><div class="acts"><button class="btn pri lg" data-q="again">Nog een keer</button><button class="btn lg" data-q="other">Ander spel</button></div></section>'+
     '<div class="grid3"><section class="card"><h3 class="disp">Per locatie</h3><ol class="per">'+Q.res.map(x=>{const ok=g.time?x.ok:x.d<=7;
-      return '<li class="'+(g.time?(ok?"ok":"bad"):"")+'"><span class="i"'+(g.time?"":' style="background:'+qCol(x.pts)+'"')+">"+(ok?"✓":g.time?"✗":"")+'</span><span class="n">'+esc(x.n)+(g.time&&!ok&&x.pick?"<small>jij: "+esc(x.pick)+"</small>":"")+'</span><span class="d">'+(g.time?(ok?nlS(x.s)+" s":"fout"):x.d+" m")+'</span><span class="p">'+(x.pts?"+"+nlN(x.pts):"0")+"</span></li>"}).join("")+"</ol></section>"+
+      return '<li class="'+(g.time?(ok?"ok":"bad"):"")+'"><span class="i"'+(g.time?"":' style="background:'+qCol(x.pts)+'"')+">"+(ok?"✓":g.time?"✗":"")+'</span><span class="n">'+esc(x.n)+(g.time&&!ok?(x.skip?"<small>overgeslagen</small>":x.pick?"<small>jij: "+esc(x.pick)+"</small>":""):"")+'</span><span class="d">'+(g.time?(ok?nlS(x.s)+" s":"fout"):x.d+" m")+'</span><span class="p">'+(x.pts?"+"+nlN(x.pts):"0")+"</span></li>"}).join("")+"</ol></section>"+
     '<section class="card"><h3 class="disp">Op de kaart</h3><div class="review">'+reviewSVG()+'</div><p class="legend">'+(g.time?"Groen is de goede plek, rood wat je fout koos.":"Groen is de echte plek, het kruis is waar jij tikte.")+"</p></section>"+
     '<section class="card">'+(hist.length>1?'<h3 class="disp">Jouw laatste potjes</h3><div class="bars">'+hist.map((h,i)=>'<div class="'+(i===hist.length-1?"last ":"")+(best&&h.ts===best.ts?"top":"")+'"><span>'+nlN(h.score)+'</span><i style="height:'+Math.max(5,Math.round(h.score/hmax*100))+'%"></i></div>').join("")+'</div><p class="legend" style="margin:0 0 18px">Gemiddeld '+nlN(Math.round(hist.reduce((a,h)=>a+h.score,0)/hist.length))+" over je laatste "+hist.length+"</p>":"")+
       '<h3 class="disp">Ranglijst</h3>'+boardHTML(Q.mode,g,5,ts)+"</section></div></div>";
