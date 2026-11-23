@@ -206,6 +206,13 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 
 /* ---------- spellen ---------- */
 .len-sw{align-self:flex-end}
+/* keuze vrij spel / competitie: titel met onderregel */
+.len-sw button{display:grid;justify-items:start;align-content:center;gap:1px;min-height:52px;padding:6px 18px 7px;text-align:left;min-width:150px}
+.len-sw button b{font-weight:750;font-size:15.5px;line-height:1.15}
+.len-sw button small{font-size:12.5px;font-weight:550;color:var(--ink-3);line-height:1.2}
+.len-sw button[aria-pressed="true"] small{color:var(--ink-2)}
+.len-sw button[data-len="all"][aria-pressed="true"] b{color:var(--op-ink)}
+@media (max-width:760px){.len-sw{display:flex;width:100%}.len-sw button{flex:1;min-width:0}}
 .games{display:grid;gap:14px}
 .game{display:grid;grid-template-columns:200px 1fr auto;gap:24px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px 22px 18px 18px}
 .game-art{position:relative;border-radius:14px;overflow:hidden;aspect-ratio:16/10;background:#DDEBC9}
@@ -240,6 +247,9 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .rank .parts span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .rank .parts i{font-style:normal;width:15px;height:15px;border-radius:50%;border:1.5px solid var(--op);color:var(--op-ink);font-size:9px;font-weight:800;display:inline-grid;place-items:center;line-height:1}
 .rank .parts span.no{opacity:.5}
+.rank .dev{display:inline-grid;place-items:center;vertical-align:-2px;margin-left:5px;color:var(--ink-3)}
+.rank .dev+.dev{margin-left:2px}
+.rank .dev svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 @media (max-width:760px){.rank .nm small.parts{gap:7px;font-size:12px}.rank .parts span{gap:3px}.rank .parts i{width:14px;height:14px;font-size:8.5px}}
 .board-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
 .board-h h2{margin:0;font-size:22px;flex:1}
