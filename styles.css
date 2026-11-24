@@ -70,6 +70,15 @@ button{cursor:pointer;-webkit-user-select:none;user-select:none}
 .adm-st dd{margin:2px 0 0;font-weight:650;display:flex;align-items:center;gap:8px}
 .adm-st .dot{width:8px;height:8px;border-radius:50%;background:var(--ink-3)}
 .adm-st .dot.on{background:var(--good)}
+.adm-st .dot.shut{background:#D9711B}
+.adm-st:has(>div:only-child){grid-template-columns:1fr}
+.adm-l{display:block;font-weight:650;margin:0 0 6px}
+.adm-row{display:flex;gap:8px;margin-bottom:10px}
+.adm-row .inp{flex:1;min-width:0;height:48px}
+.adm-row .btn{height:48px;flex:none}
+.adm-box .btn.lg+.hint{margin-top:10px}
+.shut{display:block;border-left:3px solid #D9711B;background:color-mix(in srgb,#D9711B 10%,transparent);color:var(--ink);padding:8px 12px;border-radius:0 10px 10px 0;font-weight:600}
+.board-tot .shut{margin:0 0 12px;font-size:14.5px}
 .adm-box .hint{margin:10px 0 0;color:var(--ink-3);font-size:14px}
 .adm-box .foot{margin-top:18px}
 .icon-btn{width:44px;height:44px;border-radius:12px;border:1.5px solid var(--line);background:var(--surface);display:grid;place-items:center;color:var(--ink);padding:0}

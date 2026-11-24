@@ -29,6 +29,7 @@ Upload de nieuwe bestanden opnieuw in dezelfde repository en overschrijf de oude
 - Zonder bereik speel je gewoon door; je score gaat mee zodra er weer verbinding is.
 - Onder de ranglijst staat **Scores van dit toestel uit de ranglijst halen**. Dat haalt alle scores die op dat toestel gespeeld zijn uit de ranglijst, voor iedereen; scores van andere toestellen blijven staan. Werkt alleen met verbinding.
 - **Beheer:** open `#beheer` achter het adres van de app (bijvoorbeeld `https://acc-tnrl.github.io/BA-Airsoft/#beheer`), vul de beheercode in en kies **Alle scores wissen**. De ranglijst wordt dan voor iedereen leeg. Toestellen die op dat moment offline zijn, wissen hun scores zodra ze weer verbinding hebben. Zonder de beheercode kan niemand dit; bewaar de code dus goed en deel hem niet.
+- **Competitie sluiten:** op dezelfde beheerpagina stel je bij **Competitie** een moment van sluiten in. Vanaf dat moment blijft de competitiestand staan; spelers kunnen gewoon doorspelen, maar hun competitiescores tellen dan niet mee (de app zegt dat er ook bij). Met **Competitie weer openen** tellen scores daarna weer mee. Vrij spel telt altijd gewoon.
 - De lijst is openbaar en niet beveiligd: iemand met verstand van zaken kan er een nepscore in zetten. Voor een vriendengroep is dat prima. Wil je het later dichtzetten, dan kan de opslag worden vervangen door bijvoorbeeld Supabase.
 
 ## Wat er in zit

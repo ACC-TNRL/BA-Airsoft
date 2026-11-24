@@ -318,7 +318,7 @@ function mqttClient(url,onMsg,onState){
 }
 
 const Scores=(()=>{
-  const ROOT="ba-veld/v1/score/", RESET="ba-veld/v1/reset", BROKERS=["wss://broker.emqx.io:8084/mqtt","wss://broker.hivemq.com:8884/mqtt","wss://test.mosquitto.org:8081/mqtt"];
+  const ROOT="ba-veld/v1/score/", RESET="ba-veld/v1/reset", CONFIG="ba-veld/v1/config", BROKERS=["wss://broker.emqx.io:8084/mqtt","wss://broker.hivemq.com:8884/mqtt","wss://test.mosquitto.org:8081/mqtt"];
   let runs=store.get("runs",[]);              // eigen potjes: {n,mode,score,avg,sec,ts,max}
   let remote=store.get("remote",{});          // laatst bekende online scores: topic -> rij
   const listeners=new Set(); let clients=[], lastBroadcast=0;
@@ -333,12 +333,31 @@ const Scores=(()=>{
   const resetText=t=>new TextEncoder().encode("ba-veld-reset:"+t);
   const ALG={name:"ECDSA",namedCurve:"P-256"}, SIG={name:"ECDSA",hash:"SHA-256"};
   let pubKey=null;
-  async function validReset(t,sig){
-    try{pubKey=pubKey||await crypto.subtle.importKey("jwk",ADMIN,ALG,false,["verify"]);return await crypto.subtle.verify(SIG,pubKey,unb64(sig),resetText(t))}catch(e){return false}
+  async function validSig(bytes,sig){
+    try{pubKey=pubKey||await crypto.subtle.importKey("jwk",ADMIN,ALG,false,["verify"]);return await crypto.subtle.verify(SIG,pubKey,unb64(sig),bytes)}catch(e){return false}
   }
-  async function signReset(code,t){
+  async function signBytes(code,bytes){
     try{const k=await crypto.subtle.importKey("jwk",Object.assign({d:String(code).trim()},ADMIN),ALG,false,["sign"]);
-      const sig=b64(await crypto.subtle.sign(SIG,k,resetText(t)));return await validReset(t,sig)?sig:null}catch(e){return null}
+      const sig=b64(await crypto.subtle.sign(SIG,k,bytes));return await validSig(bytes,sig)?sig:null}catch(e){return null}
+  }
+  const validReset=(t,sig)=>validSig(resetText(t),sig), signReset=(code,t)=>signBytes(code,resetText(t));
+  /* Beheer: competitie sluiten en weer openen. Lijst met gesloten periodes [van, tot] (tot 0 = nog dicht), ondertekend
+     met de beheercode. Competitiepotjes (alle 34) die in een gesloten periode eindigen, tellen niet mee en gaan niet online,
+     zodat de stand van het moment van sluiten blijft staan. */
+  let cfg=store.get("cfg",{t:0,w:[],sig:""}), tick=0;
+  const isComp=mode=>/-all$/.test(mode);
+  const shut=ts=>cfg.w.some(([a,b])=>ts>=a&&(!b||ts<b));
+  const counts=r=>!isComp(r.mode)||!shut(+r.ts||0);
+  const cfgText=(t,w)=>new TextEncoder().encode("ba-veld-config:"+t+":"+JSON.stringify(w));
+  const okW=w=>Array.isArray(w)&&w.length<=40&&w.every(x=>Array.isArray(x)&&x.length===2&&x.every(n=>typeof n==="number"&&n>=0));
+  function armTick(){ // pagina's bijwerken op het moment dat de competitie sluit
+    clearTimeout(tick); const now=Date.now(), next=cfg.w.map(x=>x[0]).filter(a=>a>now).sort((a,b)=>a-b)[0];
+    if(next&&next-now<20*864e5)tick=setTimeout(()=>{emit();armTick()},next-now+50);
+  }
+  function applyCfg(m){
+    if(!(m.t>cfg.t))return; cfg={t:m.t,w:m.w,sig:m.sig}; store.set("cfg",cfg); armTick();
+    const seen={}; runs.forEach(r=>{const k=r.mode+"|"+nkey(r.n);if(isComp(r.mode)&&!seen[k]){seen[k]=1;publish(r.mode,r.n)}}); // online de beste die nog meetelt
+    emit();
   }
   function applyReset(t,sig){
     if(!(t>reset.t))return; reset={t,sig}; store.set("reset",reset);
@@ -352,7 +371,7 @@ const Scores=(()=>{
   const emit=()=>listeners.forEach(f=>f());
   const better=(a,b)=>b.score-a.score||a.sec-b.sec||a.ts-b.ts; // hoogste score, bij gelijk: snelste tijd
   const topicOf=(mode,name)=>ROOT+mode+"/"+DEVICE+"-"+encodeURIComponent(nkey(name)).slice(0,120);
-  function bestOf(mode,name){return runs.filter(r=>r.mode===mode&&nkey(r.n)===nkey(name)).sort(better)[0]||null}
+  function bestOf(mode,name){return runs.filter(r=>r.mode===mode&&nkey(r.n)===nkey(name)&&counts(r)).sort(better)[0]||null}
   function myNames(){const seen={},out=[];runs.slice().sort((a,b)=>b.ts-a.ts).forEach(r=>{const k=nkey(r.n);if(!seen[k]){seen[k]=1;out.push(r.n)}});return out}
   function publish(mode,name){
     const b=bestOf(mode,name); if(!b)return;
@@ -361,16 +380,20 @@ const Scores=(()=>{
   }
   function broadcastAll(){ // zelfherstel: de laatste wis-actie en alle eigen beste scores opnieuw sturen
     if(reset.t)clients.forEach(c=>c.alive&&c.publish(RESET,JSON.stringify(reset),true));
+    if(cfg.t)clients.forEach(c=>c.alive&&c.publish(CONFIG,JSON.stringify(cfg),true));
     const seen={}; runs.forEach(r=>{const k=r.mode+"|"+nkey(r.n);if(!seen[k]){seen[k]=1;publish(r.mode,r.n)}});
   }
   function onMsg(topic,payload){
     if(topic===RESET){try{const m=JSON.parse(new TextDecoder().decode(payload));
       if(m.t>reset.t&&m.t<Date.now()+864e5&&typeof m.sig==="string")validReset(m.t,m.sig).then(ok=>ok&&applyReset(m.t,m.sig))}catch(e){}return}
+    if(topic===CONFIG){try{const m=JSON.parse(new TextDecoder().decode(payload));
+      if(m.t>cfg.t&&m.t<Date.now()+864e5&&okW(m.w)&&typeof m.sig==="string")validSig(cfgText(m.t,m.w),m.sig).then(ok=>ok&&applyCfg(m))}catch(e){}return}
     if(!topic.startsWith(ROOT))return; let row=null;
     if(payload.length){try{row=JSON.parse(new TextDecoder().decode(payload))}catch(e){return}}
     if(!row){if(remote[topic]){delete remote[topic];save()}return}
     const mode=topic.slice(ROOT.length).split("/")[0];
     if(!after(row)){if(remote[topic]){delete remote[topic];save()}return} // van vóór de laatste wis-actie
+    if(isComp(mode)&&shut(+row.ts||0))return; // gespeeld terwijl de competitie dicht was: telt niet, de oude stand blijft
     if(typeof row.n!=="string"||!(row.score>=0)||row.score>(row.max||34000)||row.score>34000||!(row.sec>=0))return; // grove controle
     remote[topic]={n:String(row.n).slice(0,16),mode,score:Math.round(row.score),avg:+row.avg||0,sec:+row.sec||0,ts:+row.ts||0,dev:/^[mtc]$/.test(row.dev)?row.dev:"",mine:topic.includes("/"+DEVICE+"-")};
     save();
@@ -379,30 +402,42 @@ const Scores=(()=>{
   function connect(){
     if(clients.length)return;
     clients=BROKERS.map(u=>mqttClient(u,onMsg,()=>{emit();if(Date.now()-lastBroadcast>4000&&clients.some(c=>c.alive)){lastBroadcast=Date.now();setTimeout(broadcastAll,800)}}));
-    clients.forEach(c=>{c.subscribe(RESET);c.subscribe(ROOT+"#")});
+    clients.forEach(c=>{c.subscribe(RESET);c.subscribe(CONFIG);c.subscribe(ROOT+"#")});
   }
   function disconnect(){ // slapen: verbindingen dicht; bij connect() komt alles weer binnen (de servers bewaren de scores)
     if(!clients.length)return; const old=clients; clients=[]; old.forEach(c=>c.close()); emit();
   }
+  armTick();
   return{
     connect, disconnect, on(f){listeners.add(f);return()=>listeners.delete(f)},
     get online(){return clients.some(c=>c.alive)},
-    add(run){runs.push(run);
+    add(run){if(!counts(run))return false; runs.push(run); // competitie dicht: telt niet mee, niet bewaren
       // per naam en spel: laatste 20 potjes en altijd de beste
       const keep=new Set(), g={}; runs.forEach(r=>{const k=r.mode+"|"+nkey(r.n);(g[k]=g[k]||[]).push(r)});
       Object.values(g).forEach(a=>{a.slice().sort((x,y)=>y.ts-x.ts).slice(0,20).forEach(r=>keep.add(r));keep.add(a.slice().sort(better)[0])});
-      runs=runs.filter(r=>keep.has(r)); store.set("runs",runs); publish(run.mode,run.n); emit();
+      runs=runs.filter(r=>keep.has(r)); store.set("runs",runs); publish(run.mode,run.n); emit(); return true;
     },
     best:bestOf, myNames,
     history(mode,name){return runs.filter(r=>r.mode===mode&&nkey(r.n)===nkey(name)).sort((a,b)=>a.ts-b.ts)},
     board(mode){ // één regel per naam: de beste, van dit toestel en online samen
-      const all=runs.filter(r=>r.mode===mode&&after(r)).map(r=>Object.assign({mine:true},r)).concat(Object.values(remote).filter(r=>r.mode===mode&&after(r)));
+      const all=runs.filter(r=>r.mode===mode&&after(r)&&counts(r)).map(r=>Object.assign({mine:true},r)).concat(Object.values(remote).filter(r=>r.mode===mode&&after(r)&&counts(r)));
       const best={}; all.sort(better).forEach(r=>{const k=nkey(r.n);if(!best[k])best[k]=r});
       let k=0; // plek telt alleen spelers die meedingen
       return Object.values(best).sort(better).map(r=>{const ref=REF.test(r.n);return Object.assign({},r,{ref,rank:ref?0:++k})});
     },
     isRef:n=>REF.test(n),
     get lastReset(){return reset.t},
+    // competitie: closed = nu dicht; at = begin van de huidige of geplande sluiting (0 = geen)
+    get comp(){const o=cfg.w.find(([a,b])=>!b);return{closed:shut(Date.now()),at:o?o[0]:0}},
+    async setClose(code,at){ // at = moment van sluiten; 0 = weer openen of geplande sluiting annuleren
+      if(!clients.some(c=>c.alive))return "offline";
+      const now=Date.now(); let w=cfg.w.map(x=>x.slice()); const i=w.findIndex(([a,b])=>!b);
+      if(at){if(i>=0)w[i][0]=at;else w.push([at,0])}
+      else if(i>=0){if(w[i][0]>now)w.splice(i,1);else w[i][1]=now}
+      w=w.filter(([a,b])=>!b||b>a).slice(-40);
+      const sig=await signBytes(code,cfgText(now,w)); if(!sig)return "code";
+      const m={t:now,w,sig}; clients.forEach(c=>c.alive&&c.publish(CONFIG,JSON.stringify(m),true)); applyCfg(m); return "ok";
+    },
     checkCode(code){return signReset(code,Date.now()).then(Boolean)},
     async resetAll(code){ // beheer: alle scores van iedereen wissen
       if(!clients.some(c=>c.alive))return "offline";
@@ -605,6 +640,7 @@ function totalBoard(){
     p.mine=p.mine||!!r.mine; if(r.ts>p.ts){p.ts=r.ts;p.n=r.n}}));
   let k=0; return Object.values(per).sort((a,b)=>b.score-a.score||a.sec-b.sec||a.ts-b.ts).map(r=>Object.assign(r,{played:Object.keys(r.parts).length,rank:r.ref?0:++k}));
 }
+const fmtWhen=t=>{const d=new Date(t);return d.toLocaleDateString("nl-NL",{weekday:"short",day:"numeric",month:"short"}).replace(/\./g,"")+" om "+d.toLocaleTimeString("nl-NL",{hour:"2-digit",minute:"2-digit"})};
 const totalOf=name=>name?totalBoard().find(r=>Scores.isRef(name)?r.ref:(!r.ref&&nkey(r.n)===nkey(name))):null;
 function totalRow(r,i,me){const you=me>=0&&i===me;
   return '<li class="'+(r.ref?"hc":r.rank<=3?"m"+r.rank:"")+(you?" you":"")+'"><span class="rk">'+(r.ref?"":r.rank)+'</span><span class="nm"><b>'+esc(r.ref?"Raymond":r.n)+devIcons(GAMES.map(g=>r.devs[g.id]))+(you?'<i class="tag">jij</i>':"")+'</b><small class="parts">'+
@@ -630,9 +666,10 @@ function gameArt(id){ // een stukje echte veldkaart met de postsymbolen van het 
 }
 function pageGames(v){
   const draw=()=>{const len=LEN(), N=len==="all"?LOCS.length:10;
-  const tot=len==="all"?totalOf(store.get("lastName","")):null;
+  const tot=len==="all"?totalOf(store.get("lastName","")):null, comp=Scores.comp;
   v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Spellen</h1><p>Leer waar alles ligt op het veld. Elke vraag is maximaal 1000 punten waard.</p></div>'+lenSeg()+"</div>"+
-    '<p class="len-note">'+(len==="all"?"Je beste score bij elk van de drie spellen telt op tot je totaal in de competitiestand."+
+    '<p class="len-note">'+(len==="all"?(comp.closed?'<span class="shut">De competitie is gesloten sinds '+fmtWhen(comp.at)+". Je kunt gewoon spelen, maar je scores tellen nu niet mee.</span>"
+      :"Je beste score bij elk van de drie spellen telt op tot je totaal in de competitiestand."+(comp.at?" De competitie sluit "+fmtWhen(comp.at)+".":""))+
       (tot?"<b>Jouw totaal "+nlN(tot.score)+(tot.ref?"":" · plek "+tot.rank)+" · "+tot.played+" van 3 gespeeld</b>":""):"Om te oefenen: elke keer 10 willekeurige locaties. Telt niet mee voor de competitiestand.")+"</p>"+
     '<div class="games">'+GAMES.map((g,i)=>{const mode=g.id+"-"+len, name=store.get("lastName",""), best=name?Scores.best(mode,name):null, board=Scores.board(mode), row=best?board.find(r=>nkey(r.n)===nkey(name)):null;
       return '<article class="game"><div class="game-art">'+gameArt(g.id)+'</div><div class="game-b"><h2 class="disp"><span class="ctl" aria-hidden="true">'+(i+1)+"</span>"+g.title+"</h2><p>"+g.desc+'</p><div class="game-meta"><span class="chip op">'+g.rule+"</span>"+
@@ -669,7 +706,8 @@ function boardHTML(mode,g,max,mark){
 function pageRank(v){
   const draw=()=>{const len=LEN();
     v.innerHTML='<div class="page"><div class="page-h"><div><h1 class="disp">Ranglijst</h1><p>Per speler telt de beste score. Bij een gelijke score wint de snelste.</p></div>'+lenSeg()+"</div>"+
-      (len==="all"?'<section class="board board-tot"><div class="board-h"><h2 class="disp">Competitiestand</h2><small>'+plural(totalBoard().filter(r=>!r.ref).length,"speler","spelers")+'</small></div><p class="board-sub">Je beste scores bij de drie spellen opgeteld, met alle '+LOCS.length+" locaties. Een spel dat je nog niet speelde telt als 0.</p>"+totalHTML(10)+"</section>":"")+
+      (len==="all"?'<section class="board board-tot"><div class="board-h"><h2 class="disp">Competitiestand</h2><small>'+plural(totalBoard().filter(r=>!r.ref).length,"speler","spelers")+'</small></div><p class="board-sub">Je beste scores bij de drie spellen opgeteld, met alle '+LOCS.length+" locaties. Een spel dat je nog niet speelde telt als 0."+(!Scores.comp.closed&&Scores.comp.at?" De competitie sluit "+fmtWhen(Scores.comp.at)+".":"")+"</p>"+
+        (Scores.comp.closed?'<p class="shut">Gesloten sinds '+fmtWhen(Scores.comp.at)+". Dit is de stand van dat moment. Nieuwe scores tellen niet mee.</p>":"")+totalHTML(10)+"</section>":"")+
       '<div class="boards">'+GAMES.map((g,i)=>'<section class="board"><div class="board-h"><span class="ctl" aria-hidden="true">'+(i+1)+'</span><h2 class="disp">'+g.title+"</h2><small>"+plural(Scores.board(g.id+"-"+len).filter(r=>!r.ref).length,"speler","spelers")+"</small></div>"+boardHTML(g.id+"-"+len,g,10)+"</section>").join("")+"</div>"+
       '<div class="foot"><span>'+(Scores.online?"Live: scores van alle spelers worden gedeeld.":"Offline: je ziet de laatst bekende ranglijst. Nieuwe scores gaan mee zodra er weer verbinding is.")+'</span><button class="linkbtn" id="wipe">Scores van dit toestel uit de ranglijst halen</button></div></div>'};
   draw();
@@ -686,12 +724,20 @@ function pageRank(v){
 /* ---------- beheer (#beheer) ---------- */
 function pageAdmin(v){
   const when=t=>new Date(t).toLocaleString("nl-NL",{day:"numeric",month:"long",year:"numeric",hour:"2-digit",minute:"2-digit"});
-  let busy=false;
+  let busy=false, cbusy=false, cval=null;
+  const pad=n=>String(n).padStart(2,"0"), toInput=t=>{const d=new Date(t);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes())};
+  const compBox=on=>{const c=Scores.comp, st=c.closed?"Gesloten sinds "+fmtWhen(c.at):c.at?"Open, sluit "+fmtWhen(c.at):"Open";
+    return '<section class="board adm-box"><h2 class="disp">Competitie</h2><p>Sluit je de competitie, dan blijft de competitiestand staan zoals hij op dat moment is. Spelers kunnen gewoon doorspelen, maar hun scores in de competitie tellen dan niet mee. Daarna kun je hem weer openen.</p>'+
+      '<dl class="adm-st"><div><dt>Status</dt><dd>'+(c.closed?'<span class="dot shut"></span>':'<span class="dot on"></span>')+st+"</dd></div></dl>"+
+      (c.closed?'<button class="btn pri lg" id="copen"'+(on&&!cbusy?"":" disabled")+">Competitie weer openen</button>"
+        :'<label class="adm-l" for="cclose">'+(c.at?"Ander moment kiezen":"Moment van sluiten")+'</label><div class="adm-row"><input class="inp" type="datetime-local" id="cclose" value="'+(cval!=null?cval:c.at?toInput(c.at):"")+'"><button class="btn pri" id="cset"'+(on&&!cbusy?"":" disabled")+">"+(c.at?"Wijzigen":"Sluiting instellen")+"</button></div>"+
+          (c.at?'<button class="btn lg" id="copen"'+(on&&!cbusy?"":" disabled")+">Sluiting annuleren</button>":""))+
+      (on?"":'<p class="hint">Dit kan pas als er verbinding is met de ranglijst.</p>')+"</section>"};
   const draw=()=>{const code=store.get("admin",""), on=Scores.online, last=Scores.lastReset;
     v.innerHTML='<div class="page adm"><div class="page-h"><div><h1 class="disp">Beheer</h1><p>Alleen voor de beheerder van de app.</p></div></div>'+
       (!code?'<section class="board adm-box"><h2 class="disp">Beheercode</h2><p>Vul de beheercode in om de ranglijst te kunnen beheren. De code wordt op dit toestel onthouden.</p>'+
         '<form class="form" id="af"><input class="inp" id="acode" type="password" autocomplete="current-password" spellcheck="false" placeholder="Beheercode" aria-label="Beheercode"><div class="err" id="aerr" hidden>Deze beheercode klopt niet.</div><button class="btn pri lg" type="submit">Doorgaan</button></form></section>'
-      :'<section class="board adm-box"><h2 class="disp">Alle scores wissen</h2><p>De ranglijsten van alle spellen worden leeg, bij iedereen. Ook de beste scores op elk toestel verdwijnen. Toestellen die nu geen verbinding hebben, wissen hun scores zodra ze weer online zijn.</p>'+
+      :compBox(on)+'<section class="board adm-box"><h2 class="disp">Alle scores wissen</h2><p>De ranglijsten van alle spellen worden leeg, bij iedereen. Ook de beste scores op elk toestel verdwijnen. Toestellen die nu geen verbinding hebben, wissen hun scores zodra ze weer online zijn.</p>'+
         '<dl class="adm-st"><div><dt>Verbinding</dt><dd>'+(on?'<span class="dot on"></span>Online':'<span class="dot"></span>Geen verbinding')+'</dd></div><div><dt>Laatst gewist</dt><dd>'+(last?when(last):"Nog nooit")+"</dd></div></dl>"+
         '<button class="btn danger lg" id="areset"'+(on&&!busy?"":" disabled")+">"+(busy?"Bezig met wissen…":"Alle scores wissen")+"</button>"+
         (on?"":'<p class="hint">Wissen kan pas als er verbinding is met de ranglijst.</p>')+
@@ -700,7 +746,17 @@ function pageAdmin(v){
       if(await Scores.checkCode(c)){store.set("admin",c);draw()}else{$("#aerr").hidden=false;$("#acode").select()}}}
   };
   draw();
+  const setClose=async(at,done)=>{cbusy=true;draw();const r=await Scores.setClose(store.get("admin",""),at);cbusy=false;cval=null;
+    if(r==="code"){try{localStorage.removeItem("baveld.admin")}catch(x){}toast("De beheercode klopt niet meer. Vul hem opnieuw in.")}
+    else toast(r==="ok"?done:"Geen verbinding. Probeer het opnieuw zodra je online bent.");draw()};
+  v.oninput=e=>{if(e.target.id==="cclose")cval=e.target.value};
   v.onclick=e=>{
+    if(e.target.id==="cset"){const at=new Date($("#cclose").value).getTime();
+      if(!at){toast("Kies eerst een datum en tijd.");return}
+      if(at<=Date.now())confirmDlg("Nu sluiten?","Dat moment is al geweest. De competitie gaat meteen dicht en scores vanaf "+fmtWhen(at)+" tellen niet mee.","Sluiten",()=>setClose(at,"De competitie is gesloten"));
+      else setClose(at,"De competitie sluit "+fmtWhen(at));return}
+    if(e.target.id==="copen"){if(Scores.comp.closed)confirmDlg("Competitie weer openen?","Scores tellen vanaf nu weer mee. Wat er tijdens de sluiting gespeeld is, telt niet mee.","Openen",()=>setClose(0,"De competitie is weer open"));
+      else setClose(0,"Sluiting geannuleerd");return}
     if(e.target.id==="aforget"){try{localStorage.removeItem("baveld.admin")}catch(x){}draw();return}
     if(e.target.id==="areset")confirmDlg("Alle scores wissen?","De ranglijst wordt voor iedereen leeg. Dit kun je niet ongedaan maken.","Alles wissen",async()=>{
       busy=true;draw(); const r=await Scores.resetAll(store.get("admin","")); busy=false;
@@ -708,7 +764,7 @@ function pageAdmin(v){
       else toast(r==="ok"?"Alle scores zijn gewist":"Geen verbinding. Probeer het opnieuw zodra je online bent.");
       draw()},"danger");
   };
-  const off=Scores.on(()=>{if(route==="beheer"&&!$(".dlg-bg")&&!$("#af"))draw()}); cleanup=()=>{off();v.onclick=null};
+  const off=Scores.on(()=>{if(route==="beheer"&&!$(".dlg-bg")&&!$("#af")&&document.activeElement.id!=="cclose")draw()}); cleanup=()=>{off();v.onclick=null;v.oninput=null};
 }
 
 /* ---------- vensters ---------- */
@@ -807,7 +863,7 @@ function render(){
   const dots=n<=12?'<div class="dots">'+Q.list.map((_,i)=>{const x=Q.res[i];return '<i class="'+(x?(g.time?(x.ok?"ok":"bad"):""):i===Q.i?"cur":"")+'"'+(x&&!g.time?' style="background:'+qCol(x.pts)+'"':"")+"></i>"}).join("")+"</div>":'<div class="dots bar"><b style="width:'+Math.round(Q.res.length/n*100)+'%"></b></div>';
   const ask=g.id==="tik"?"Tik het rondje van":g.id==="plek"?"Waar ligt":"Welk punt licht op?";
   const big=ph==="ready"?"· · ·":g.id==="naam"?(r?cur.n:"Typ de naam"):cur.n+(g.id==="plek"?"?":"");
-  $(".hud",Q.el).innerHTML='<div class="prog">'+dots+"<span>Vraag "+(Q.i+1)+" van "+n+" · "+(Q.len==="all"?"Competitie":"Vrij spel")+'</span></div><div class="q" aria-live="polite"><small>'+(g.id==="naam"&&isPhone()?"":ask)+'</small><strong class="disp'+(ph==="ready"||(g.id==="naam"&&!r)?" dim":"")+'">'+esc(big)+'</strong></div><div class="score"><small>Score</small><b class="disp num">'+nlN(total)+'</b></div><button class="quit" id="quit" aria-label="Stoppen" title="Stoppen">×</button>';
+  $(".hud",Q.el).innerHTML='<div class="prog">'+dots+"<span>Vraag "+(Q.i+1)+" van "+n+" · "+(Q.len==="all"?"Competitie"+(Scores.comp.closed?", telt niet mee":""):"Vrij spel")+'</span></div><div class="q" aria-live="polite"><small>'+(g.id==="naam"&&isPhone()?"":ask)+'</small><strong class="disp'+(ph==="ready"||(g.id==="naam"&&!r)?" dim":"")+'">'+esc(big)+'</strong></div><div class="score"><small>Score</small><b class="disp num">'+nlN(total)+'</b></div><button class="quit" id="quit" aria-label="Stoppen" title="Stoppen">×</button>';
   // kaartlaag
   Q.mv.setGame(gameLayer());
   $("#unz").hidden=!(Q.zoom&&ph==="ask"); $(".zoomed-hint",Q.el).hidden=!(Q.zoom&&ph==="ask");
@@ -889,7 +945,7 @@ function finish(){
   const avg=g.time?Q.res.reduce((a,x)=>a+x.s,0)/Q.res.length:Q.res.reduce((a,x)=>a+x.d,0)/Q.res.length;
   const prevBest=Scores.best(Q.mode,Q.name);
   const run={n:Q.name,mode:Q.mode,score:total,avg:Math.round(avg*100)/100,sec:Math.round(Q.used/10)/100,ts,max,dev:deviceOf(Q.ptr)};
-  Scores.add(run); Q.phase="done"; Q.mv.destroy();
+  const counted=Scores.add(run); Q.phase="done"; Q.mv.destroy(); // false: competitie gesloten, telt niet mee
   const board=Scores.board(Q.mode), row=board.find(r=>r.mine&&nkey(r.n)===nkey(Q.name)), best=Scores.best(Q.mode,Q.name), isBest=best&&best.ts===ts;
   const pct=total/max, stars=pct>=.9?3:pct>=.7?2:pct>=.4?1:0;
   const kpi=g.time?[["Goed",Q.res.filter(x=>x.ok).length+" van "+Q.res.length],["Gemiddeld",nlS(avg)+" s"],["Tijd",mmss(run.sec)]]:[["Raak",Q.res.filter(x=>x.d<=7).length+" van "+Q.res.length],["Gemiddeld ernaast",Math.round(avg)+" m"],["Tijd",mmss(run.sec)]];
@@ -898,7 +954,7 @@ function finish(){
   Q.el.innerHTML='<div class="res-wrap"><div class="res-top"><button class="btn ghost" data-q="other">← Spellen</button><span class="muted">'+esc(Q.name)+"</span></div>"+
     '<section class="result">'+TOPO+'<div class="stars" aria-label="'+stars+' van 3 sterren">'+[1,2,3].map(i=>'<svg viewBox="0 0 24 24" class="'+(i<=stars?"on":"")+'" style="--d:'+(250+i*130)+'ms"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z"/></svg>').join("")+"</div>"+
     '<div class="big disp num" data-to="'+total+'">0</div><div class="of">van '+nlN(max)+" punten · "+g.title+" · "+(Q.len==="all"?"alle "+LOCS.length:"10")+" locaties</div>"+
-    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(Q.len==="all"?(t=>t?(t.ref?"Maker van de app · je totaal is nu "+nlN(t.score):"Je totaal is nu "+nlN(t.score)+", plek "+t.rank+" in de competitie"):"")(totalOf(Q.name))
+    (isBest&&prevBest?'<div class="badge">Nieuwe persoonlijke beste</div>':"")+'<div class="place">'+(!counted?"Telt niet mee: de competitie is gesloten":Q.len==="all"?(t=>t?(t.ref?"Maker van de app · je totaal is nu "+nlN(t.score):"Je totaal is nu "+nlN(t.score)+", plek "+t.rank+" in de competitie"):"")(totalOf(Q.name))
       :"Vrij spel"+(row&&!row.ref?" · plek "+row.rank+" van "+board.filter(r=>!r.ref).length:""))+(!isBest&&best?" · jouw beste blijft "+nlN(best.score):"")+"</div>"+
     '<dl class="kpi">'+kpi.map(x=>"<div><dt>"+x[0]+'</dt><dd class="disp num">'+x[1]+"</dd></div>").join("")+'</dl><div class="acts"><button class="btn pri lg" data-q="again">Nog een keer</button><button class="btn lg" data-q="other">Ander spel</button></div></section>'+
     '<div class="grid3"><section class="card"><h3 class="disp">Per locatie</h3><ol class="per">'+Q.res.map(x=>{const ok=g.time?x.ok:x.d<=7;
